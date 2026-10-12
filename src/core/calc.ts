@@ -1,4 +1,4 @@
-import { addDays, esc, eur, fmtD, fmtN, num, round2, shiftWeekend, todayISO } from "./format";
+import { addDays, esc, eur, fmtD, fmtN, num, round2, shiftFrist, todayISO } from "./format";
 import { evalExpr, topTerms } from "./formula";
 import { nlNT, seOn } from "./model";
 import type { AufmassEintrag, Hint, HintLevel, Nachtrag, Position, Project, Rechnung } from "./types";
@@ -111,8 +111,8 @@ export function calcInv(p: Project, inv: Rechnung, idx: number, vor: number, auf
   const gegenMit = round2(zahlbetrag - skonto), baMit = round2(Math.max(gegenMit,0) * baRate), auszMit = round2(gegenMit - baMit);
   const baOhne = round2(Math.max(zahlbetrag,0) * baRate), auszOhne = round2(zahlbetrag - baOhne);
 
-  const skF: { d: string; shifted: boolean } = inv.eingang ? shiftWeekend(addDays(inv.eingang, p.skontoTage)) : {d:"",shifted:false};
-  const zF: { d: string; shifted: boolean } = inv.eingang ? shiftWeekend(addDays(inv.eingang, isSchluss ? p.fristSchluss : p.fristAbschlag)) : {d:"",shifted:false};
+  const skF: { d: string; shifted: boolean; grund: string } = inv.eingang ? shiftFrist(addDays(inv.eingang, p.skontoTage), p.bundesland || "") : {d:"",shifted:false,grund:""};
+  const zF: { d: string; shifted: boolean; grund: string } = inv.eingang ? shiftFrist(addDays(inv.eingang, isSchluss ? p.fristSchluss : p.fristAbschlag), p.bundesland || "") : {d:"",shifted:false,grund:""};
 
   const paidRecorded = num(inv.zahlBetrag) > 0;
   const skIst = (inv.skontoIst === "" || inv.skontoIst == null) ? null : round2(num(inv.skontoIst));
@@ -152,6 +152,7 @@ export function calcInv(p: Project, inv: Rechnung, idx: number, vor: number, auf
     if (!inv.zahlDatum) add("info", "Zahlungsdatum fehlt – Skontoberechtigung (Fristwahrung) und Verzug sind nicht prüfbar. Datum lt. Kontoauszug eintragen.");
     if (skIst != null && skontoMoeglich && skIst > skonto + 0.01) add("warn", `Abgezogenes Skonto ${eur(skIst)} übersteigt ${fmtN(p.skontoSatz,2)} % des festgestellten Zahlbetrags (${eur(skonto)}) um ${eur(round2(skIst - skonto))} – Aufteilung klären (z. B. nachträglicher Skontoabzug zu einer Vorrechnung).`);
     if (skPaid > 0 && !skontoMoeglich) add("cut", "Skonto wurde gezogen, ist für diese Rechnung aber nicht vereinbart bzw. nicht zulässig.");
+    else if (inv.skontoGezogen && skIst == null && !skontoMoeglich) add("cut", `Skonto als gezogen vermerkt, für diese Rechnung aber ${p.skontoVereinbart ? "nicht zulässig (nur Schlussrechnung bzw. kein positiver Zahlbetrag)" : "nicht vereinbart"} (§ 16 Abs. 5 Nr. 2 VOB/B). Ein Abzug ist unberechtigt; der Differenzbetrag bleibt offen.`);
     if (skPaid > 0 && skontoMoeglich && skF.d && inv.zahlDatum && inv.zahlDatum > skF.d) add("cut", `Skonto unberechtigt: Zahlung am ${fmtD(inv.zahlDatum)} nach Ablauf der Skontofrist (${fmtD(skF.d)}). Skontobetrag ${eur(skonto)} ist nachzuzahlen.`);
     const skS = skIst != null ? skPaid : Math.min(skPaid, skonto);
     const soll = round2(zahlbetrag - skS - (p.freistellung ? 0 : round2(Math.max(zahlbetrag - skS, 0) * 0.15)));

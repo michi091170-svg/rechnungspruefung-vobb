@@ -1,5 +1,6 @@
 export * from "./types";
 export * from "./format";
+export * from "./feiertage";
 export * from "./formula";
 export * from "./vobc";
 export * from "./model";

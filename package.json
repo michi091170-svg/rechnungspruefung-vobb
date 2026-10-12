@@ -1,6 +1,6 @@
 {
   "name": "rechnungspruefung-vobb",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "Kumulierte Rechnungsprüfung nach VOB/B mit Aufmaß nach VOB/C für die externe Bauleitung",
   "type": "module",
@@ -12,13 +12,18 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "check": "npm run typecheck && npm test && npm run build",
-    "smoke": "node e2e/smoke.mjs dist/index.html"
+    "smoke": "node e2e/smoke.mjs dist/index.html",
+    "desktop": "npm run build && node -e \"require('fs').copyFileSync('dist/index.html','dist/Rechnungspruefung-VOB-B.html')\""
   },
   "devDependencies": {
+    "@types/node": "^22.20.5",
+    "jspdf": "^4.2.1",
+    "pdfjs-dist": "^3.11.174",
     "typescript": "~5.8.3",
     "vite": "^6.3.5",
     "vite-plugin-singlefile": "^2.2.0",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "xlsx": "^0.18.5"
   },
   "engines": {
     "node": ">=20"

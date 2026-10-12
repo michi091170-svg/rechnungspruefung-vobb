@@ -135,3 +135,5 @@ canvas.scanc.place{cursor:crosshair;outline:2px dashed var(--mark-ink);outline-o
   #app,.toast,.modal{display:none!important}
   #print{display:block}
 }
+
+small.ki{display:inline-block;margin-left:4px;font-size:.68rem;font-weight:700;padding:0 5px;border-radius:8px;background:var(--mark);color:var(--mark-ink)}

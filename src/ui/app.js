@@ -1,21 +1,23 @@
 // Oberfläche der Rechnungsprüfung. Rechenlogik und Stammdaten liegen in src/core (TypeScript, getestet).
 import {
-  ATV, GRUNDLAGEN, INV_ART, INV_STATUS, NT_STATUS, UEB, UEB_GRUND, UEB_KIND,
+  ATV, BUNDESLAENDER, GRUNDLAGEN, SCHEMA_VERSION, VOB_FASSUNG_STANDARD, INV_ART, INV_STATUS, NT_STATUS, UEB, UEB_GRUND, UEB_KIND,
   addDays, addWerktage, calcAll, calcInv, chain, daysBetween, ensureSic, esc,
   eur, evalExpr, fmtD, fmtF, fmtIn, fmtN, migrateProject, newProject,
-  nlNT, num, numOrNull, round2, sampleProject, seOn, shiftWeekend, sicCalc,
+  mergeSync, nlNT, num, numOrNull, round2, sampleProject, seOn, sicCalc,
   sicHints, toISODate, todayISO, topTerms, uebItemCalc, uebKey, uebResult, uebRules,
   uid, unitKind, yearEnd3,
 } from "../core/index.ts";
 
 const $ = s => document.querySelector(s);
+/* global __APP_VERSION__ */
+const APP_VERSION = typeof __APP_VERSION__ === "string" ? __APP_VERSION__ : "dev";
 
 
 /* ---------- Zustand & Speicherung ---------- */
 const LS_KEY = "rp.vobb.projects.v1", UI_KEY = "rp.vobb.ui.v1";
 const S = { projects: [], cur: null, tab: "uebersicht", inv: null, menu: false, confirm: null, mode: "local" };
 let COL = null, saveTimer = null; const pending = new Set();
-function lsLoad(){ try { const a = JSON.parse(localStorage.getItem(LS_KEY) || "[]"); return Array.isArray(a) ? a : []; } catch(e){ return []; } }
+function lsLoad(){ try { const a = JSON.parse(localStorage.getItem(LS_KEY) || "[]"); return Array.isArray(a) ? a.filter(p => p && p.id).map(migrateProject) : []; } catch(e){ return []; } }
 function lsSave(){ try { localStorage.setItem(LS_KEY, JSON.stringify(S.projects)); } catch(e){} }
 function uiSave(){ try { localStorage.setItem(UI_KEY, JSON.stringify({cur:S.cur, tab:S.tab, inv:S.inv})); } catch(e){} }
 function uiLoad(){ try { Object.assign(S, JSON.parse(localStorage.getItem(UI_KEY) || "{}")); } catch(e){} }
@@ -28,7 +30,7 @@ async function flush(){
   const ids = [...pending]; pending.clear();
   for (const id of ids) {
     const p = S.projects.find(x => x.id === id);
-    try { if (p) await COL.doc("p_" + id).set({ json: JSON.stringify(p), updated: new Date().toISOString() }); }
+    try { if (p) { const stand = p.updated; await COL.doc("p_" + id).set({ json: JSON.stringify(p), updated: new Date().toISOString() }); p.synced = stand; lsSave(); } }
     catch(e){ toast("Speichern im Konto fehlgeschlagen – lokal gesichert."); }
   }
 }
@@ -42,14 +44,12 @@ async function connect(){
     const col = db.collection("data/users/" + id);
     const snap = await col.get();
     const remote = snap.docs.map(d => { try { return JSON.parse(d.data().json); } catch(e){ return null; } }).filter(Boolean);
-    const byId = new Map(remote.map(p => [p.id, p]));
     COL = col;
-    for (const lp of S.projects) {
-      const rp = byId.get(lp.id);
-      if (!rp || (lp.updated || 0) > (rp.updated || 0)) { byId.set(lp.id, lp); pending.add(lp.id); }
-    }
-    S.projects = [...byId.values()].sort((a,b) => (a.name||"").localeCompare(b.name||"", "de"));
+    const M = mergeSync(S.projects, remote.filter(p => p && p.id));
+    M.push.forEach(id => pending.add(id));
+    S.projects = M.projects;
     S.mode = "db";
+    if (M.conflicts.length) setTimeout(() => toast(`${M.conflicts.length === 1 ? "Ein Projekt wurde" : M.conflicts.length + " Projekte wurden"} auf zwei Geräten geändert – der lokale Stand ist als „Konflikt-Kopie“ erhalten.`), 400);
     if (!S.projects.find(p => p.id === S.cur)) S.cur = S.projects[0]?.id || null;
     lsSave(); if (pending.size) flush();
     render();
@@ -231,9 +231,9 @@ function invoiceEditor(p, C, idx){
     const diff = round2(x.bGP - x.bAN);
     return `<tr class="${cls}"><td class="nw"><b>${esc(x.pos.oz)}</b>${x.nt ? `<br><span class="tag ${x.ntOk ? "ok" : "cut"}">${esc(x.nt.nr)}</span>` : ""}</td>
     <td style="min-width:180px">${esc(x.pos.text)}</td><td>${esc(x.pos.eh)}</td><td class="r nw">${fmtN(x.pos.menge)}</td><td class="r nw">${eur(x.pos.ep)}</td>
-    <td>${inNum(`am:${I}:${x.pos.id}:an`, x.a.an, 3)}</td>
+    <td>${inNum(`am:${I}:${x.pos.id}:an`, x.a.an, 3)}${x.a.anSrc === "ki" ? `<small class="ki" title="Aus automatischer Erkennung übernommen, noch nicht von Hand geändert">KI</small>` : ""}</td>
     <td style="min-width:200px"><div style="display:flex;gap:4px;align-items:center">${inText(`am:${I}:${x.pos.id}:formel`, x.a.formel || "", "z. B. 12,5*3,2+4*2")}${unitKind(x.pos.eh) ? `<button class="btn sm" data-a="uebopen" data-id="${I}" data-v="${x.pos.id}" title="Übermessungsrechner nach Abschnitt 5 ATV" aria-label="Übermessungsrechner für Pos. ${esc(x.pos.oz)}">Ü</button>` : ""}</div></td>
-    <td>${hasF ? `<input class="in num" disabled value="${esc(x.fErr ? "Fehler" : fmtIn(x.gp,3))}">` : inNum(`am:${I}:${x.pos.id}:gp`, x.a.gp, 3)}</td>
+    <td>${hasF ? `<input class="in num" disabled value="${esc(x.fErr ? "Fehler" : fmtIn(x.gp,3))}">` : inNum(`am:${I}:${x.pos.id}:gp`, x.a.gp, 3)}${x.a.gpSrc === "ki" ? `<small class="ki" title="Aus automatischer Erkennung übernommen, noch nicht von Hand geändert">KI</small>` : ""}</td>
     <td class="r nw">${eur(x.bAN)}</td><td class="r nw"><b>${eur(x.bGP)}</b></td><td class="r nw ${diff < 0 ? "neg" : diff > 0 ? "pos" : ""}">${diff ? eur(diff) : "–"}</td>
     <td style="min-width:90px">${inText(`am:${I}:${x.pos.id}:blatt`, x.a.blatt || "")}</td><td style="min-width:200px">${inText(`am:${I}:${x.pos.id}:bem`, x.a.bem || "", "Begründung bei Kürzung")}</td></tr>`;
   }).join("");
@@ -298,7 +298,7 @@ function invoiceEditor(p, C, idx){
         <div>Fälligkeit (${r.isSchluss ? p.fristSchluss : p.fristAbschlag} Tage, § 16 VOB/B)</div><div>${r.zF.d ? fmtD(r.zF.d) + (r.zF.shifted ? " *" : "") : "–"}</div>
         ${!r.paidRecorded && dz !== null ? `<div>Verbleibend bis Fälligkeit</div><div class="${dz < 0 ? "neg" : ""}">${dz < 0 ? -dz + " Tage überfällig" : dz + " Tage"}</div>` : ""}
         ${!r.paidRecorded && ds !== null && r.skontoMoeglich ? `<div>Verbleibend bis Skontofrist</div><div class="${ds < 0 ? "neg" : ""}">${ds < 0 ? "abgelaufen" : ds + " Tage"}</div>` : ""}
-      </div>${r.skF.shifted || r.zF.shifted ? `<small>* Fristende fiel auf ein Wochenende und wurde nach § 193 BGB auf den nächsten Werktag verschoben. Feiertage bitte selbst prüfen.</small>` : ""}</div>
+      </div>${r.skF.shifted || r.zF.shifted ? `<small>* Fristende fiel auf ${esc([...new Set([r.skF.grund, r.zF.grund].filter(Boolean).join(", ").split(", "))].join(", "))} und wurde nach § 193 BGB auf den nächsten Werktag verschoben. ${p.bundesland ? `Feiertage: ${esc((BUNDESLAENDER.find(b => b[0] === p.bundesland) || ["",""])[1])}.` : "Nur bundeseinheitliche Feiertage berücksichtigt – Bundesland unter „Vertrag“ wählen."}</small>` : ""}</div>
       <div class="sec"><h3>Zahlung erfassen</h3><div class="fields">
         ${fld("Zahlungsdatum", inDate(`inv:${I}:zahlDatum`, inv.zahlDatum))}
         ${fld("Ausgezahlt an AN (€)", inNum(`inv:${I}:zahlBetrag`, inv.zahlBetrag, 2, 2), p.freistellung ? "" : "Ohne abgeführte Bauabzugsteuer")}
@@ -415,7 +415,7 @@ function uebApply(p){
   const m = S.modal; const inv = p.rechnungen.find(x => x.id === m.invId); if (!inv) return;
   const R = uebResult(p, { ...m, kind: m.kindU }); if (R.netto == null || isNaN(R.netto)) return;
   inv.aufmass = inv.aufmass || {}; const a = inv.aufmass[m.posId] = inv.aufmass[m.posId] || {};
-  a.formel = R.formel; a.gp = R.netto;
+  a.formel = R.formel; a.gp = R.netto; a.gpSrc = "hand";
   const keep = String(a.bem || "").split(" · ").filter(t => t.trim() && !t.startsWith("Übermessung nach"));
   a.bem = [...keep, R.bem].join(" · ");
   S.modal = null; save(p); render(); toast(`Menge geprüft: ${fmtN(R.netto, 3)} ${R.unitL}`);
@@ -513,6 +513,7 @@ function tabVertrag(p){
     ${fld("Auftraggeber", inText(P("ag"), p.ag))}
     ${fld("Auftragnehmer", inText(P("an"), p.an))}
     ${fld("Baustelle", inText(P("ort"), p.ort))}
+    ${fld("Bundesland der Baustelle", sel(P("bundesland"), BUNDESLAENDER, p.bundesland || ""), "Für Feiertage beim Fristende (§ 193 BGB)")}
     ${fld("Vergabe-/Vertragsnummer", inText(P("vergabeNr"), p.vergabeNr))}
     ${fld("Bauleitung (Prüfer)", inText(P("bauleiter"), p.bauleiter))}
     ${fld("Vertragsdatum", inDate(P("vertragsdatum"), p.vertragsdatum))}
@@ -520,6 +521,7 @@ function tabVertrag(p){
     ${fld("Auftragssumme netto lt. Auftrag (€)", inNum(P("auftragssummeLaut"), p.auftragssummeLaut, 2, 2))}
     ${fld("Gewerk / ATV (VOB/C)", sel(P("atv"), ATV.map(([k,l]) => [k, k + " – " + l]), p.atv), "Aufmaß- und Abrechnungsregeln nach Abschnitt 5 der ATV")}
   </div><div style="margin-top:12px">${chk(P("vobB"), p.vobB !== false, "VOB/B als Vertragsbestandteil vereinbart")}</div>
+  <div class="fields" style="margin-top:10px">${fld("Vereinbarte VOB-Fassung", inText(P("vobFassung"), p.vobFassung || "", VOB_FASSUNG_STANDARD), "Maßgeblich ist die bei Vertragsschluss vereinbarte Fassung; erscheint im Prüfvermerk")}</div>
   <div class="fields" style="margin-top:12px;grid-template-columns:repeat(auto-fill,minmax(280px,1fr))">
     ${fld("Vertragsstrafe", `<textarea class="in" rows="2" data-b="${P("vertragsstrafe")}">${esc(p.vertragsstrafe || "")}</textarea>`, "Vorbehalt bei Abnahme erforderlich (§ 11 Abs. 4 VOB/B)")}
     ${fld("Ausführungsfristen", `<textarea class="in" rows="2" data-b="${P("ausfuehrung")}">${esc(p.ausfuehrung || "")}</textarea>`)}
@@ -576,12 +578,13 @@ function reportHTML(p, C, idx){
   return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Prüfvermerk ${esc(inv.nr)} – ${esc(p.name)}</title>
 <style>body{font-family:Arial,Helvetica,sans-serif;color:#111;margin:24px;font-size:11pt}h1{font-size:16pt;margin:0 0 4px}h2{font-size:12pt;margin:18px 0 6px;border-bottom:1.5px solid #111;padding-bottom:3px}table{border-collapse:collapse;width:100%;font-size:9.5pt}th,td{border-bottom:1px solid #bbb;padding:4px 5px;text-align:left;vertical-align:top}th{border-bottom:1.5px solid #111}.r{text-align:right;white-space:nowrap}.meta td{border:0;padding:2px 8px 2px 0}.tot td{font-weight:bold;border-top:1.5px solid #111}.box{border:3px double #111;padding:10px 14px;margin-top:10px}.sig{display:flex;gap:40px;margin-top:40px}.sig div{flex:1;border-top:1px solid #111;padding-top:4px;font-size:9pt}ul{padding-left:18px;font-size:9.5pt}@page{size:A4;margin:15mm}</style></head><body>
 <h1>Prüfvermerk zur ${esc(inv.art)} Nr. ${esc(inv.nr)}</h1>
-<table class="meta"><tr><td>Bauvorhaben:</td><td><b>${esc(p.name)}</b> ${esc(p.ort)}</td></tr><tr><td>Auftraggeber:</td><td>${esc(p.ag)}</td></tr><tr><td>Auftragnehmer:</td><td>${esc(p.an)}</td></tr><tr><td>Vertrag:</td><td>${esc(p.vergabeNr)} ${p.vertragsdatum ? "vom " + fmtD(p.vertragsdatum) : ""} – VOB/B, VOB/C ${esc(p.atv)}</td></tr><tr><td>Konditionen:</td><td>Skonto ${p.skontoVereinbart ? `vereinbart (${fmtN(p.skontoSatz,2)} %, ${esc(p.skontoTage)} Tage${p.skontoAbschlag ? ", auch auf Abschläge" : ", nur Schlussrechnung"})` : "nicht vereinbart"} · Sicherheitsleistung ${seOn(p) ? "vereinbart" : "nicht vereinbart"}${num(p.nachlass) ? ` · Nachlass ${fmtN(p.nachlass,2)} % ${nlNT(p) ? "inkl. Nachträge" : "nur Hauptauftrag"}` : ""}</td></tr><tr><td>Rechnung:</td><td>vom ${fmtD(inv.datum)}, Zugang ${fmtD(inv.eingang)}, geprüft am ${fmtD(inv.pruefdatum || todayISO())}${inv.gemAufmass ? ", gemeinsames Aufmaß (§ 14 Abs. 2 VOB/B)" : ""}</td></tr></table>
+<table class="meta"><tr><td>Bauvorhaben:</td><td><b>${esc(p.name)}</b> ${esc(p.ort)}</td></tr><tr><td>Auftraggeber:</td><td>${esc(p.ag)}</td></tr><tr><td>Auftragnehmer:</td><td>${esc(p.an)}</td></tr><tr><td>Vertrag:</td><td>${esc(p.vergabeNr)} ${p.vertragsdatum ? "vom " + fmtD(p.vertragsdatum) : ""} – ${p.vobB === false ? "BGB-Bauvertrag (VOB/B nicht vereinbart)" : esc(p.vobFassung || "VOB/B, VOB/C")}, ATV ${esc(p.atv)}</td></tr><tr><td>Konditionen:</td><td>Skonto ${p.skontoVereinbart ? `vereinbart (${fmtN(p.skontoSatz,2)} %, ${esc(p.skontoTage)} Tage${p.skontoAbschlag ? ", auch auf Abschläge" : ", nur Schlussrechnung"})` : "nicht vereinbart"} · Sicherheitsleistung ${seOn(p) ? "vereinbart" : "nicht vereinbart"}${num(p.nachlass) ? ` · Nachlass ${fmtN(p.nachlass,2)} % ${nlNT(p) ? "inkl. Nachträge" : "nur Hauptauftrag"}` : ""}</td></tr><tr><td>Rechnung:</td><td>vom ${fmtD(inv.datum)}, Zugang ${fmtD(inv.eingang)}, geprüft am ${fmtD(inv.pruefdatum || todayISO())}${inv.gemAufmass ? ", gemeinsames Aufmaß (§ 14 Abs. 2 VOB/B)" : ""}</td></tr></table>
 <h2>Positionsprüfung (kumulierte Mengen)</h2>
 <table><thead><tr><th>OZ</th><th>Kurztext</th><th>EH</th><th class="r">EP</th><th class="r">Menge AN</th><th class="r">Menge geprüft</th><th class="r">Betrag AN</th><th class="r">Betrag geprüft</th><th>Aufmaß / Bemerkung</th></tr></thead><tbody>
-${rows.map(x => `<tr><td>${esc(x.pos.oz)}</td><td>${esc(x.pos.text)}${x.nt ? ` (${esc(x.nt.nr)}${x.ntOk ? "" : " – nicht beauftragt"})` : ""}</td><td>${esc(x.pos.eh)}</td><td class="r">${eur(x.pos.ep)}</td><td class="r">${fmtN(x.an)}</td><td class="r">${fmtN(x.gp)}</td><td class="r">${eur(x.bAN)}</td><td class="r">${eur(x.bGP)}</td><td>${esc([x.a.blatt, x.a.formel, x.a.bem].filter(Boolean).join(" · "))}</td></tr>`).join("")}
+${rows.map(x => `<tr><td>${esc(x.pos.oz)}</td><td>${esc(x.pos.text)}${x.nt ? ` (${esc(x.nt.nr)}${x.ntOk ? "" : " – nicht beauftragt"})` : ""}</td><td>${esc(x.pos.eh)}</td><td class="r">${eur(x.pos.ep)}</td><td class="r">${fmtN(x.an)}${x.a.anSrc === "ki" ? "<sup>K</sup>" : ""}</td><td class="r">${fmtN(x.gp)}${x.a.gpSrc === "ki" ? "<sup>K</sup>" : ""}</td><td class="r">${eur(x.bAN)}</td><td class="r">${eur(x.bGP)}</td><td>${esc([x.a.blatt, x.a.formel, x.a.bem].filter(Boolean).join(" · "))}</td></tr>`).join("")}
 ${num(inv.pauschalAN) || num(inv.pauschalGP) ? `<tr><td colspan="6">Pauschaler Abschlag ohne Positionsaufstellung (kumuliert)</td><td class="r">${eur(num(inv.pauschalAN))}</td><td class="r">${eur(num(inv.pauschalGP))}</td><td>§ 16 Abs. 1 Nr. 1 VOB/B</td></tr>` : ""}
 <tr class="tot"><td colspan="6">Summe netto</td><td class="r">${eur(r.sumAN)}</td><td class="r">${eur(r.sumGP)}</td><td></td></tr></tbody></table>
+${rows.some(x => x.a.anSrc === "ki" || x.a.gpSrc === "ki") ? `<p style="font-size:8.5pt;margin:4px 0 0"><sup>K</sup> Menge aus automatischer Texterkennung (KI) der eingereichten Unterlagen übernommen und danach nicht von Hand geändert. Erkennungsfehler sind möglich; die Werte sind gegen die Originalunterlagen abzugleichen.</p>` : ""}
 <h2>Ermittlung des Zahlbetrags</h2>
 <table><thead><tr><th></th><th class="r">AN</th><th class="r">geprüft</th></tr></thead><tbody>
 ${tr("Leistungsstand kumuliert netto", eur(r.cAN.net), eur(r.cGP.net))}
@@ -606,6 +609,7 @@ ${inv.forderung ? tr("Geforderter Zahlbetrag lt. Rechnung", "", eur(num(inv.ford
 ${inv.bem ? `<h2>Prüfbemerkung</h2><p>${esc(inv.bem).replace(/\n/g,"<br>")}</p>` : ""}
 <h2>Hinweise</h2><ul>${r.hints.map(h => `<li>${h.t}</li>`).join("")}</ul>
 <p style="font-size:9pt">Fachtechnisch und rechnerisch geprüft. Der Prüfvermerk der Bauleitung ist eine Empfehlung an den Auftraggeber und stellt kein Anerkenntnis gegenüber dem Auftragnehmer dar; die Zahlungsfreigabe obliegt dem Auftraggeber.</p>
+<p style="font-size:8pt;color:#555">Erstellt mit „Rechnungsprüfung nach VOB/B“, Programmversion ${esc(APP_VERSION)}, am ${fmtD(todayISO())}. Fristen nach § 193 BGB ${p.bundesland ? "mit Feiertagen " + esc((BUNDESLAENDER.find(b => b[0] === p.bundesland) || ["", p.bundesland])[1]) : "nur mit bundeseinheitlichen Feiertagen"} berechnet.</p>
 <div class="sig"><div>Ort, Datum, Unterschrift Bauleitung${p.bauleiter ? "<br>" + esc(p.bauleiter) : ""}</div><div>Freigabe Auftraggeber</div></div>
 </body></html>`;
 }
@@ -623,6 +627,15 @@ async function download(filename, data){
     try { await dl.save({ filename, data }); toast("Datei gespeichert"); return; }
     catch(e){ if (e && e.code === "declined") { toast("Speichern abgebrochen"); return; } if (e && e.code === "too_large") { toast("Datei ist zu groß zum Speichern"); return; } }
   }
+  if (!window.claude) {
+    // Lokale Datei (z. B. vom Desktop): normaler Browser-Download
+    try {
+      const blob = data instanceof Blob ? data : new Blob([data], { type: /\.html?$/i.test(filename) ? "text/html;charset=utf-8" : /\.csv$/i.test(filename) ? "text/csv;charset=utf-8" : /\.json$/i.test(filename) ? "application/json" : "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob), a = document.createElement("a");
+      a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000); toast("Datei wird im Download-Ordner gespeichert"); return;
+    } catch(e){ /* weiter mit Kopierdialog */ }
+  }
   if (typeof data !== "string") { toast("Speichern ist in dieser Ansicht nicht verfügbar."); return; }
   S.modal = { title: filename, text: data, hint: "Direktes Speichern ist hier nicht verfügbar. Inhalt kopieren und als Datei sichern." }; render();
 }
@@ -637,6 +650,7 @@ function modalHTML(){
   }
   if (m.kind === "auftrag") return auftragModal(m);
   if (m.kind === "aufmass") return aufmassModal(m);
+  if (m.kind === "kiconsent") return kiConsentModal();
   if (m.kind === "nachtrag") return nachtragModal(m);
   if (m.kind === "doctype") return doctypeModal();
   if (m.kind === "ueb") return uebModal(m);
@@ -663,6 +677,7 @@ function applyBind(el){
     x.aufmass = x.aufmass || {}; const a = x.aufmass[parts[2]] = x.aufmass[parts[2]] || {};
     a[parts[3]] = v;
     if (parts[3] === "formel") { const r = evalExpr(v); if (r !== null && !isNaN(r)) a.gp = r; }
+    if (parts[3] === "an") a.anSrc = "hand"; else if (parts[3] === "gp" || parts[3] === "formel") a.gpSrc = "hand";
   }
   else if (parts[0] === "sic" || parts[0] === "sb" || parts[0] === "sf") {
     const sc = ensureSic(p); if (t === "tri") v = el.value === "" ? null : el.value === "1";
@@ -698,6 +713,7 @@ document.addEventListener("change", e => {
 document.addEventListener("keydown", e => {
   if (e.key === "Enter" && e.target.matches("input.in[data-b]")) { e.preventDefault(); const el = e.target; const b = el.dataset.b; if (applyBind(el)) { render(); const n = document.querySelector(`[data-b="${CSS.escape(b)}"]`); if (n) n.focus({preventScroll:true}); } }
   if (e.key === "Enter" && e.target.dataset && e.target.dataset.u && S.modal && S.modal.kind === "ueb") { e.preventDefault(); uebSet(e.target, true); }
+  if (e.key === "Escape" && S.modal && S.modal.kind === "kiconsent") { kiAnswer(false); return; }
   if (e.key === "Escape" && (S.modal || S.menu)) { S.modal = null; S.menu = false; render(); }
 });
 document.addEventListener("click", e => {
@@ -747,7 +763,7 @@ document.addEventListener("click", e => {
     case "openinv": S.placeMode = null; S.editMarks = false; S.tab = "re"; S.inv = id; S.confirm = null; uiSave(); render(); window.scrollTo(0,0); break;
     case "closeinv": S.inv = null; S.confirm = null; uiSave(); render(); break;
     case "delinv": if (confirmOnce("inv"+id)) { p.rechnungen = p.rechnungen.filter(x => x.id !== id); S.inv = null; save(p); render(); toast("Rechnung gelöscht"); } break;
-    case "copyan": { const inv = p.rechnungen.find(x => x.id === id); let n = 0; for (const [k, v] of Object.entries(inv.aufmass || {})) { if ((v.gp === "" || v.gp == null) && !v.formel && v.an !== "" && v.an != null) { v.gp = v.an; n++; } } save(p); render(); toast(`${n} Menge${n === 1 ? "" : "n"} übernommen`); break; }
+    case "copyan": { const inv = p.rechnungen.find(x => x.id === id); let n = 0; for (const [k, v] of Object.entries(inv.aufmass || {})) { if ((v.gp === "" || v.gp == null) && !v.formel && v.an !== "" && v.an != null) { v.gp = v.an; v.gpSrc = v.anSrc || "hand"; n++; } } save(p); render(); toast(`${n} Menge${n === 1 ? "" : "n"} übernommen`); break; }
     case "print": { const C = calcAll(p); const i = p.rechnungen.findIndex(x => x.id === id); const html = reportHTML(p, C, i); const bodyPart = html.slice(html.indexOf("<body>") + 6, html.lastIndexOf("</body>")); const style = html.slice(html.indexOf("<style>"), html.indexOf("</style>") + 8).replace(/body\{/, "#print{"); $("#print").innerHTML = style + bodyPart; setTimeout(() => { try { window.print(); } catch(_) { toast("Drucken nicht verfügbar – Prüfvermerk herunterladen"); } }, 50); break; }
     case "dlreport": { const C = calcAll(p); const i = p.rechnungen.findIndex(x => x.id === id); download(`Pruefvermerk_${(p.rechnungen[i].nr || "Rechnung").replace(/[^\w.-]+/g,"_")}.html`, reportHTML(p, C, i)); break; }
     case "csv": { const C = calcAll(p); const i = p.rechnungen.findIndex(x => x.id === id); download(`Pruefung_${(p.rechnungen[i].nr || "Rechnung").replace(/[^\w.-]+/g,"_")}.csv`, csvFor(p, C, i)); break; }
@@ -757,8 +773,10 @@ document.addEventListener("click", e => {
     case "scanedit": S.editMarks = !S.editMarks; S.placeMode = null; render(); break;
     case "scanpdf": exportScanPDF(id); break;
     case "scandel": { const inv = p.rechnungen.find(x => x.id === id); if (inv && inv.scan) { inv.scan.marks = inv.scan.marks.filter(m => m.id !== el.dataset.v); save(p); render(); } break; }
-    case "scanan": { const inv = p.rechnungen.find(x => x.id === id); let n = 0; inv.aufmass = inv.aufmass || {}; (inv.scan?.marks || []).forEach(m => { if (m.kind === "pos" && m.posId && m.menge != null) { const a = inv.aufmass[m.posId] = inv.aufmass[m.posId] || {}; a.an = m.menge; n++; } }); save(p); render(); toast(`${n} Menge${n === 1 ? "" : "n"} als „Menge AN“ übernommen`); break; }
-    case "closemodal": S.modal = null; render(); break;
+    case "scanan": { const inv = p.rechnungen.find(x => x.id === id); let n = 0; inv.aufmass = inv.aufmass || {}; (inv.scan?.marks || []).forEach(m => { if (m.kind === "pos" && m.posId && m.menge != null) { const a = inv.aufmass[m.posId] = inv.aufmass[m.posId] || {}; a.an = m.menge; a.anSrc = "ki"; n++; } }); save(p); render(); toast(`${n} Menge${n === 1 ? "" : "n"} als „Menge AN“ übernommen`); break; }
+    case "closemodal": if (S.modal && S.modal.kind === "kiconsent") { kiAnswer(false); break; } S.modal = null; render(); break;
+    case "kiok": kiAnswer(true, !!($("#kiRemember") && $("#kiRemember").checked)); break;
+    case "kino": kiAnswer(false); break;
     case "uebopen": uebOpen(p, id, el.dataset.v); break;
     case "uebadd": { const r0 = uebRules(p, p.atv, S.modal.kindU)[0]; S.modal.items.push({ bez:"", a:"", b:"", c:"", n:1, r: r0 ? r0.id : "" }); render(); break; }
     case "uebdel": S.modal.items.splice(Number(el.dataset.v), 1); render(); break;
@@ -786,6 +804,22 @@ function importFile(file){
 }
 
 /* ---------- PDF / Scan einlesen, erkennen, markieren ---------- */
+/* Datenschutz: einmalige Bestätigung vor der ersten automatischen Erkennung */
+const KI_KEY = "rp.vobb.kiok.v1"; let kiResolve = null;
+function kiConsent(){
+  try { if (localStorage.getItem(KI_KEY) === "1") return Promise.resolve(true); } catch(e){}
+  return new Promise(res => { kiResolve = res; S.modal = { kind: "kiconsent" }; render(); });
+}
+function kiAnswer(ok, remember){
+  if (ok && remember) { try { localStorage.setItem(KI_KEY, "1"); } catch(e){} }
+  const r = kiResolve; kiResolve = null; S.modal = null; render(); if (r) r(ok);
+}
+const kiConsentModal = () => `<div class="modal" role="dialog" aria-modal="true" aria-labelledby="kiT"><div class="box"><h3 id="kiT">Hinweis zum Datenschutz</h3>
+  <p style="font-size:.9rem">Für die automatische Erkennung werden die Seiten als Bilder an das KI-Modell von claude.ai (Anthropic) übertragen und dort ausgewertet. Rechnungen, Aufmaße und Auftragsunterlagen enthalten oft personenbezogene Daten (Namen, Anschriften, Bankverbindungen).</p>
+  <ul style="font-size:.86rem;margin:0 0 10px;padding-left:18px"><li>Prüfe, ob dein Vertrag mit dem Auftraggeber und die Datenschutzvorgaben (DSGVO) diese Verarbeitung zulassen.</li><li>Schwärze nicht benötigte personenbezogene Angaben vor dem Einlesen.</li><li>Erkannte Werte sind im Prüfvermerk mit <b>K</b> gekennzeichnet, bis du sie von Hand änderst. Gleiche sie immer mit den Originalunterlagen ab.</li></ul>
+  <label class="c"><input type="checkbox" id="kiRemember" checked><span>Hinweis auf diesem Gerät nicht mehr anzeigen</span></label>
+  <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn ghost" data-a="kino">Abbrechen</button><button class="btn pri" data-a="kiok">Verstanden, Erkennung starten</button></div></div></div>`;
+
 const SCAN = {}; let SAMPLE = null, SAMPLE_LIMITS = null, scanCtl = null, DRAG = null;
 const PDFJS_WORKER = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 let SAMPLE_CHECKED = false;
@@ -865,6 +899,7 @@ function toJpeg(canvas, maxBytes){
 async function recognize(invId, opts = {}){
   const p = cp(); const inv = p && p.rechnungen.find(r => r.id === invId); const st = SCAN[invId];
   if (!SAMPLE || !st || !inv) return;
+  if (!(await kiConsent())) return;
   logReset(`Rechnung ${inv.nr}: ${st.name}`);
   const lv = p.positions.map(x => `${x.oz} | ${x.text} | ${x.eh} | EP ${x.ep}`).join("\n").slice(0, 20000);
   const out = []; let failed = false;
@@ -910,7 +945,7 @@ rechnung.art ist "Abschlagsrechnung", "Teilschlussrechnung" oder "Schlussrechnun
     if (inv.scan.kumuliert === false) logAdd("warn", "Rechnung weist offenbar nur den Abrechnungszeitraum aus – Mengen wurden nicht automatisch als kumulierte Menge AN übernommen.");
     if (opts.auto) {
       let k = 0; inv.aufmass = inv.aufmass || {};
-      inv.scan.marks.forEach(m => { if (m.kind === "pos" && m.posId && m.menge != null && inv.scan.kumuliert !== false) { const a = inv.aufmass[m.posId] = inv.aufmass[m.posId] || {}; a.an = m.menge; k++; } });
+      inv.scan.marks.forEach(m => { if (m.kind === "pos" && m.posId && m.menge != null && inv.scan.kumuliert !== false) { const a = inv.aufmass[m.posId] = inv.aufmass[m.posId] || {}; a.an = m.menge; a.anSrc = "ki"; k++; } });
       const h = inv.scan.header;
       if (h && INV_ART.includes(h.art)) inv.art = h.art;
       if (h && h.nr) inv.nr = h.nr.slice(0, 40);
@@ -1089,7 +1124,7 @@ function scanSection(p, R, inv){
 
 /* ---------- Dateiimport: Drag & Drop, GAEB, Excel/CSV, LV-Scan ---------- */
 const XLSX_URL = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
-function loadScript(src){ return new Promise((res, rej) => { if (document.querySelector(`script[src="${src}"]`) && window.XLSX) return res(); const s = document.createElement("script"); s.src = src; s.onload = () => res(); s.onerror = () => rej(new Error("Bibliothek konnte nicht geladen werden")); document.head.appendChild(s); }); }
+function loadScript(src){ return new Promise((res, rej) => { if (src === XLSX_URL && window.XLSX) return res(); if (document.querySelector(`script[src="${src}"]`) && window.XLSX) return res(); const s = document.createElement("script"); s.src = src; s.onload = () => res(); s.onerror = () => rej(new Error("Bibliothek konnte nicht geladen werden")); document.head.appendChild(s); }); }
 const extOf = f => ((f.name || "").split(".").pop() || "").toLowerCase();
 const isPdfImg = f => f.type === "application/pdf" || /^image\/(jpeg|png|webp)$/.test(f.type) || ["pdf","jpg","jpeg","png","webp"].includes(extOf(f));
 const isGAEB = f => /^(x8\d|p8\d|xml)$/.test(extOf(f));
@@ -1297,6 +1332,7 @@ async function ocrPages(pages, label, promptFor, opts, out){
 }
 async function withOCR(files, label, promptFor, onDone, opts = {}){
   if (!SAMPLE) { toast("Automatische Texterkennung ist in dieser Ansicht nicht verfügbar – App über den claude.ai-Link öffnen."); return; }
+  if (!(await kiConsent())) return;
   logReset(`${label}: ${files.map(f => f.name).join(", ")}`);
   scanCtl = new AbortController(); S.scanBusy = "Datei wird geladen …"; render();
   const res = []; let failed = false;
@@ -1481,8 +1517,8 @@ function applyAufmass(p){
     if (target === "gp") {
       const base = mode === "add" ? (a.formel && String(a.formel).trim() ? String(a.formel) : (num(a.gp) ? fmtIn(num(a.gp), 3) : "")) : "";
       a.formel = base ? base + (g.formula.startsWith("-") ? "" : "+") + g.formula : g.formula;
-      const v = evalExpr(a.formel); if (v !== null && !isNaN(v)) a.gp = v;
-    } else a.an = Math.round(((mode === "add" ? num(a.an) : 0) + g.sum) * 1000) / 1000;
+      const v = evalExpr(a.formel); if (v !== null && !isNaN(v)) a.gp = v; a.gpSrc = "ki";
+    } else { a.an = Math.round(((mode === "add" ? num(a.an) : 0) + g.sum) * 1000) / 1000; a.anSrc = "ki"; }
     if (g.blatt) a.blatt = [...new Set([...(String(a.blatt || "").split(/,\s*/).filter(Boolean)), ...g.blatt.split(/,\s*/)])].join(", ");
     n++;
   });
