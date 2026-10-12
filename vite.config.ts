@@ -16,7 +16,11 @@ function inlineLibraries(): Plugin {
     "pdf.js/3.11.174/pdf.worker.min.js": "pdfjs-dist/build/pdf.worker.min.js",
     "jspdf.umd.min.js": "jspdf/dist/jspdf.umd.min.js",
   };
-  const read = (rel: string) => readFileSync(new URL("./node_modules/" + rel, import.meta.url), "utf8").replace(/<\/script/gi, "<\\/script");
+  // „</script“ würde das Skript-Element vorzeitig beenden. U+FFFD (in den SheetJS-Codepage-Tabellen) kommt nur
+  // in Zeichenketten vor und wird als gleichwertige Escape-Folge geschrieben, damit die Datei als Artifact zulässig ist.
+  const read = (rel: string) => readFileSync(new URL("./node_modules/" + rel, import.meta.url), "utf8")
+    .replace(/<\/script/gi, "<\\/script")
+    .replace(/\uFFFD/g, "\\uFFFD");
   const tag = (rel: string) => `<script data-lib="${rel.split("/")[0]}">${read(rel)}</script>`;
   return {
     name: "inline-libraries",
