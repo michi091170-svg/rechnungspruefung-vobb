@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Rechnungsprüfung nach VOB/B</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/src/ui/styles.css">
+</head>
+<body>
+<div id="app"></div>
+<div id="print"></div>
+<input type="file" id="importFile" hidden>
+<input type="file" id="lvFile" multiple accept=".json,application/json,.x83,.x84,.x86,.x81,.xml,.xlsx,.xls,.ods,.csv,.pdf,application/pdf,image/jpeg,image/png" hidden>
+<input type="file" id="ntFile" multiple accept="application/pdf,image/jpeg,image/png,image/webp" hidden>
+<input type="file" id="amFile" multiple accept="application/pdf,image/jpeg,image/png,image/webp" hidden>
+<input type="file" id="invFile" multiple accept="application/pdf,image/jpeg,image/png,image/webp" hidden>
+<div id="dropov" hidden><div><b>Datei loslassen</b><span id="dropHint"></span></div></div>
+<input type="file" id="scanFile" accept="application/pdf,image/jpeg,image/png,image/webp" hidden>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script type="module" src="/src/ui/app.js"></script>
+</body>
+</html>
