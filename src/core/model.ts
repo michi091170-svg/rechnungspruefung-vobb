@@ -14,14 +14,18 @@ export const NT_STATUS: string[] = ["angekündigt","Angebot eingegangen","in Pr�
 export const INV_STATUS: string[] = ["eingegangen","in Prüfung","geprüft","freigegeben","bezahlt"];
 export const INV_ART: string[] = ["Abschlagsrechnung","Teilschlussrechnung","Schlussrechnung"];
 
+/** Version des gespeicherten Datenformats. 1 = bis App 1.0 (ohne Feld), 2 = ab App 1.1. */
+export const SCHEMA_VERSION = 2;
+export const VOB_FASSUNG_STANDARD = "VOB/B 2016, VOB/C 2019 inkl. Ergänzungsband 2023";
+
 /** Voreinstellungen neuer Projekte: Skonto und Sicherheitsleistung nur nach ausdrücklicher Vereinbarung. */
 export function newProject(name?: string): Project {
-  return { id: uid(), name: name || "Neues Projekt", ag:"", an:"", ort:"", vergabeNr:"", bauleiter:"", atv:"DIN 18299", vertragsdatum:"", abnahme:"",
+  return { id: uid(), name: name || "Neues Projekt", ag:"", an:"", ort:"", vergabeNr:"", bauleiter:"", atv:"DIN 18299", vertragsdatum:"", abnahme:"", bundesland:"", vobFassung: VOB_FASSUNG_STANDARD,
     ust:19, rc13b:false, nachlass:0, nachlassNT:false, umlage:0, umlageText:"Bauwasser / Baustrom / Bauleistungsversicherung",
     seVereinbart:false, seSatz:5, seDeckel:0, seBuergschaft:false, gwSatz:3, gwBuergschaft:false,
     skontoVereinbart:false, skontoSatz:3, skontoTage:14, skontoAbschlag:false,
     fristAbschlag:21, fristSchluss:30, freistellung:true, freistellungBis:"",
-    positions:[], nachtraege:[], rechnungen:[], updated: Date.now() };
+    positions:[], nachtraege:[], rechnungen:[], updated: Date.now(), schema: SCHEMA_VERSION };
 }
 
 /* Altprojekte ohne diese Felder behalten das bisherige Rechenverhalten */
@@ -41,7 +45,36 @@ export function ensureSic(p: Project): Sicherheit {
  * Felder, die es in älteren Versionen noch nicht gab, erhalten das damalige Verhalten.
  */
 export function migrateProject(pr: Partial<Project> & { id: string }): Project {
-  return Object.assign(newProject(), { nachlassNT: true, seVereinbart: true, skontoAbschlag: true }, pr) as Project;
+  if ((pr.schema || 1) >= SCHEMA_VERSION) return pr as Project;
+  const old = (pr.schema || 1) < 2 ? { nachlassNT: true, seVereinbart: true, skontoAbschlag: true, vobFassung: "" } : {};
+  return Object.assign(newProject(), old, pr, { schema: SCHEMA_VERSION }) as Project;
+}
+
+export type SyncResult = { projects: Project[]; push: string[]; conflicts: { name: string; copyId: string }[] };
+
+/**
+ * Abgleich lokaler Projekte mit dem Kontospeicher. Ohne Konflikt gewinnt der jüngere Stand.
+ * Wurde ein Projekt seit dem letzten Abgleich lokal UND im Konto geändert (z. B. auf zwei Geräten),
+ * bleibt der Kontostand erhalten und der lokale Stand wird als Kopie angelegt – es geht nichts verloren.
+ */
+export function mergeSync(local: Project[], remote: Project[], now = Date.now(), newId: () => string = uid): SyncResult {
+  const byId = new Map(remote.map(p => [p.id, migrateProject(p)]));
+  for (const p of byId.values()) p.synced = p.updated;
+  const push: string[] = [], conflicts: SyncResult["conflicts"] = [];
+  for (const lp of local) {
+    const rp = byId.get(lp.id);
+    if (!rp) { byId.set(lp.id, lp); push.push(lp.id); continue; }
+    const lu = lp.updated || 0, ru = rp.updated || 0;
+    if (lu === ru) { byId.set(lp.id, { ...lp, synced: ru }); continue; }
+    const base = lp.synced || 0;
+    if (base && lu > base && ru > base) {
+      const d = new Date(lu), stamp = `${String(d.getDate()).padStart(2,"0")}.${String(d.getMonth()+1).padStart(2,"0")}. ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+      const copy: Project = { ...lp, id: newId(), name: `${lp.name} (Konflikt-Kopie, lokal ${stamp})`, updated: now, synced: 0 };
+      byId.set(copy.id, copy); push.push(copy.id); conflicts.push({ name: lp.name, copyId: copy.id });
+    } else if (lu > ru) { byId.set(lp.id, lp); push.push(lp.id); }
+  }
+  const projects = [...byId.values()].sort((a, b) => (a.name || "").localeCompare(b.name || "", "de"));
+  return { projects, push, conflicts };
 }
 
 export function sampleProject(): Project {

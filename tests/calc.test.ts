@@ -68,7 +68,8 @@ describe("Voreinstellungen neuer Projekte", () => {
     const r = calcAll(p).out[0];
     expect(r.skontoMoeglich).toBe(false);
     expect(r.skonto).toBe(0);
-    // Das Beispiel hat bei der 1. AR Skonto gezogen: ohne Vereinbarung fällt das als Minderzahlung auf.
+    // Das Beispiel hat bei der 1. AR Skonto gezogen: ohne Vereinbarung ist das ein unberechtigter Abzug.
+    expect(hints(p, 0).some(h => h.startsWith("cut: Skonto als gezogen vermerkt") && h.includes("nicht vereinbart"))).toBe(true);
     expect(hints(p, 0).some(h => h.startsWith("warn: Minderzahlung"))).toBe(true);
   });
 
@@ -128,8 +129,10 @@ describe("Kürzungskette und Steuern", () => {
 describe("Sicherungen aus älteren Versionen", () => {
   it("behalten das bisherige Rechenverhalten", () => {
     const alt = JSON.parse(JSON.stringify(sampleProject()));
-    delete alt.nachlassNT; delete alt.seVereinbart; delete alt.skontoAbschlag;
+    // Sicherung aus App 1.0: ohne Schemaversion und ohne die neuen Felder
+    delete alt.schema; delete alt.nachlassNT; delete alt.seVereinbart; delete alt.skontoAbschlag; delete alt.bundesland; delete alt.vobFassung;
     const p = migrateProject(alt);
+    expect(p.schema).toBe(2);
     expect(p.nachlassNT).toBe(true);
     expect(p.seVereinbart).toBe(true);
     expect(calcAll(p).out[1].zahlbetrag).toBe(36698.29);

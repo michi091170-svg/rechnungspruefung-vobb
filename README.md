@@ -2,7 +2,7 @@
 
 Web-App für die externe Bauleitung: kumulierte Prüfung von Abschlags-, Teilschluss- und Schlussrechnungen nach VOB/B, mit Aufmaß und Übermessung nach VOB/C, Nachtragsmanagement, Einbehalten, Skonto, Bauabzugsteuer, Sicherheiten und Prüfvermerk.
 
-Der Build erzeugt **eine einzige HTML-Datei** (`dist/index.html`). Sie läuft lokal im Browser oder als claude.ai-Artifact; dort kommen Kontospeicher, Downloads und KI-Texterkennung von Scans hinzu.
+Der Build erzeugt **eine einzige HTML-Datei** (`dist/index.html`) mit allen Bibliotheken. Sie läuft ohne Internet lokal im Browser (z. B. vom Desktop) oder als claude.ai-Artifact; dort kommen Kontospeicher über mehrere Geräte und KI-Texterkennung von Scans hinzu.
 
 ## Fachliche Grundlagen und Grenzen
 
@@ -14,11 +14,11 @@ Der Build erzeugt **eine einzige HTML-Datei** (`dist/index.html`). Sie läuft lo
 | Sicherheiten | § 17 VOB/B, § 9c VOB/A, §§ 650i, 650m BGB, §§ 765 ff. BGB |
 | Steuern | § 13b UStG, §§ 48–48b EStG |
 
-- **Normstand:** VOB Gesamtausgabe 2019 mit ATV-Ergänzungsband 2023. Maßgeblich ist immer die **vertraglich vereinbarte Fassung**. Übermessungsgrenzen mit dem Status „abgleichen“ vor Verwendung im Prüfvermerk am Normtext prüfen.
+- **Normstand** (geprüft 12.10.2026): VOB/B Ausgabe 2016 (in der Gesamtausgabe 2019 unverändert), VOB/C Gesamtausgabe 2019 mit ATV-Ergänzungsband 2023. Die Änderungen 2026 betreffen nur die VOB/A. Die Fassung ist je Projekt einstellbar und erscheint im Prüfvermerk. Maßgeblich ist immer die **vertraglich vereinbarte Fassung**. Übermessungsgrenzen mit dem Status „abgleichen“ vor Verwendung im Prüfvermerk am Normtext prüfen.
 - **Voreinstellungen** neuer Projekte (seit 1.0.0): Skonto *nicht vereinbart*, Sicherheitsleistung *nicht vereinbart*, Nachlass *nur auf den Hauptauftrag*. Abweichungen müssen bewusst unter „Vertrag & Konditionen“ gesetzt werden. Sicherungen älterer Versionen behalten ihr bisheriges Rechenverhalten (`migrateProject`).
 - **Strittig** und deshalb als Schalter umgesetzt: Fortwirkung eines Pauschalnachlasses auf Nachträge.
-- **Nicht berücksichtigt:** gesetzliche Feiertage bei Fristende (§ 193 BGB, nur Sa/So), länderspezifische Regelungen.
-- Die Software ersetzt keine Rechtsberatung. KI-erkannte Werte sind Vorschläge und am Original zu prüfen.
+- **Feiertage** (§ 193 BGB): bundeseinheitliche und landesweite Feiertage des gewählten Bundeslands. Nur regional geltende Feiertage (Mariä Himmelfahrt in Teilen Bayerns, Fronleichnam in einzelnen Gemeinden Sachsens und Thüringens, Augsburger Friedensfest) sind **nicht** enthalten und im Einzelfall selbst zu prüfen.
+- Die Software ersetzt keine Rechtsberatung. KI-erkannte Werte sind Vorschläge, im Prüfvermerk mit „K“ gekennzeichnet und am Original zu prüfen.
 
 ## Aufbau
 
@@ -28,7 +28,8 @@ src/core/          Rechenkern, rein funktional, TypeScript (strict), vollständi
   format.ts        Zahlen, Beträge, Datum, Fristen (§ 193 BGB, Werktage)
   formula.ts       Aufmaßformel-Parser ohne eval
   vobc.ts          ATV-Liste, Übermessungsregeln, Übermessungsrechner
-  model.ts         Voreinstellungen, Beispielprojekt, Migration alter Sicherungen
+  feiertage.ts     Gesetzliche Feiertage je Bundesland
+  model.ts         Voreinstellungen, Beispielprojekt, Schemaversion, Migration, Abgleich mit dem Konto
   calc.ts          kumulierte Rechnungsprüfung, Kürzungskette, Hinweise
   sicherheit.ts    Vertragserfüllungssicherheit und Bürgschaften
 src/ui/app.js      Oberfläche, Speicherung, Datei-Import (GAEB, Excel, PDF), Texterkennung
@@ -46,6 +47,7 @@ npm test           # Unit-Tests
 npm run typecheck  # TypeScript strict
 npm run build      # dist/index.html
 npm run check      # alles zusammen, wie in der CI
+npm run desktop    # dist/Rechnungspruefung-VOB-B.html zum Ablegen auf dem Desktop
 ```
 
 Rauchtest im Browser (benötigt Playwright mit Chromium):
@@ -58,10 +60,23 @@ npm run build && node e2e/smoke.mjs dist/index.html
 
 `dist/index.html` wird unverändert als Artifact veröffentlicht. Das Artifact benötigt die Fähigkeiten `db`, `user` (Kontospeicher), `downloads` (Dateien speichern) und `sample` (Texterkennung).
 
+## Desktop-Version
+
+`npm run desktop` erzeugt `dist/Rechnungspruefung-VOB-B.html`. Die Datei per Doppelklick im Browser öffnen (Chrome, Edge oder Firefox).
+
+- Läuft ohne Internet. Ohne Internet wird statt der Webschrift die Systemschrift verwendet.
+- Daten liegen im Speicher des Browsers auf diesem Rechner. Regelmäßig über das Menü „Sicherung herunterladen (JSON)“ eine Datei sichern; Browserdaten löschen entfernt auch die Projekte.
+- KI-Texterkennung und Kontospeicher gibt es nur in der claude.ai-Version. Sicherungen lassen sich zwischen beiden Versionen austauschen.
+
+## Sicherheit der Bibliotheken
+
+- pdf.js 3.11.174 wird mit `isEvalSupported: false` aufgerufen; das schließt die bekannte Lücke beim Öffnen manipulierter PDF (GHSA-wgrm-67xf-hhpq).
+- SheetJS 0.18.5 ist die letzte Version auf npm und hat bekannte Schwachstellen beim Einlesen manipulierter Excel-Dateien (CVE-2023-30533, CVE-2024-22363). Excel-LVs nur aus vertrauenswürdiger Quelle einlesen; Umstieg auf SheetJS 0.20.x steht aus.
+
 ## Weiterentwicklung
 
-1. Gesetzliche Feiertage je Bundesland für Fristende.
-2. Prüfvermerk: Herkunft jedes Werts (KI-erkannt / manuell geprüft) und Programmversion ausweisen.
-3. Schemaversion im Projekt, Konflikterkennung beim Sync zwischen Geräten.
-4. Oberfläche schrittweise nach TypeScript überführen und Teil-Rendering für große LVs.
-5. Hinweis und Freigabe vor Übergabe von Dokumenten an die KI-Erkennung (DSGVO, Verschwiegenheit).
+Erledigt in 1.1.0: Feiertage je Bundesland, Herkunftskennzeichnung im Prüfvermerk, Programmversion, Schemaversion, Konfliktkopie beim Abgleich, Datenschutz-Hinweis vor der KI-Erkennung, Offline-Fähigkeit.
+
+1. SheetJS auf 0.20.x und pdf.js auf eine aktuelle Hauptversion umstellen.
+2. Oberfläche schrittweise nach TypeScript überführen und Teil-Rendering für große LVs.
+3. Regional begrenzte Feiertage (Gemeindeebene) optional erfassen.

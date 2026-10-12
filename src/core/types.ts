@@ -33,6 +33,9 @@ export interface AufmassEintrag {
   formel?: string;
   blatt?: string;
   bem?: string;
+  /** Herkunft der Menge AN bzw. geprüft: "ki" = automatische Erkennung, "hand" = Eingabe/Änderung durch Prüfer */
+  anSrc?: "ki" | "hand";
+  gpSrc?: "ki" | "hand";
 }
 
 export type RechnungsArt = "Abschlagsrechnung" | "Teilschlussrechnung" | "Schlussrechnung";
@@ -113,6 +116,10 @@ export interface Project {
   atv: string;
   vertragsdatum: string;
   abnahme: string;
+  /** Bundesland der Baustelle für Feiertage bei Fristen (§ 193 BGB); leer = nur bundeseinheitliche */
+  bundesland?: string;
+  /** Vereinbarte VOB-Fassung, z. B. „VOB/B 2016, VOB/C 2019 inkl. Ergänzungsband 2023“ */
+  vobFassung?: string;
   auftragssummeLaut?: NumIn;
   vobB?: boolean;
   vertragsstrafe?: string;
@@ -147,6 +154,10 @@ export interface Project {
   ueb?: Record<string, NumIn>;
   sicherheit?: Sicherheit;
   updated: number;
+  /** Datenstand-Version, siehe SCHEMA_VERSION */
+  schema?: number;
+  /** Zeitstempel des letzten erfolgreichen Abgleichs mit dem Konto (nur lokal relevant) */
+  synced?: number;
 }
 
 export type HintLevel = "cut" | "warn" | "info";

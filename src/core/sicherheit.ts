@@ -31,7 +31,7 @@ export function sicHints(p: Project, K: ReturnType<typeof sicCalc>): [HintLevel,
   if (vob) {
     add("info", "VOB/B vereinbart: § 17 VOB/B ergänzt bzw. verdrängt die BGB-Regeln. Sicherheit nur bei Vereinbarung (§ 17 Abs. 1 Nr. 1); sie dient der vertragsgemäßen Ausführung und den Mängelansprüchen (Abs. 1 Nr. 2). Der AN hat die Wahl zwischen Einbehalt, Hinterlegung und Bürgschaft und kann eine Sicherheit durch eine andere ersetzen (Abs. 3).");
     if (s.vereinbart === true) {
-      const fr = addWerktage(p.vertragsdatum, 18);
+      const fr = addWerktage(p.vertragsdatum, 18, p.bundesland || "");
       if (!p.vertragsdatum) add("warn", "§ 17 Abs. 7 VOB/B: Sicherheit binnen 18 Werktagen nach Vertragsschluss – Vertragsdatum fehlt.");
       else if (!s.buergschaften.some(b => b.status === "liegt vor")) add(todayISO() > fr ? "warn" : "info", `§ 17 Abs. 7 VOB/B: Sicherheit war bis ${fmtD(fr)} zu leisten (18 Werktage nach Vertragsschluss). ${todayISO() > fr ? "Frist abgelaufen: der AG darf vom Guthaben des AN einen Betrag in Höhe der vereinbarten Sicherheit einbehalten (Abs. 6 und 8 gelten entsprechend)." : ""}`);
       if (num(s.satz) > 5) add("info", "Öffentliche Auftraggeber: Vertragserfüllungssicherheit soll 5 % der Auftragssumme nicht überschreiten (§ 9c Abs. 2 VOB/A). Für private AG Richtwert; in AGB Obergrenze 10 %.");

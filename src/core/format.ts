@@ -1,3 +1,4 @@
+import { feiertagName } from "./feiertage";
 import type { NumIn } from "./types";
 
 export const uid = (): string =>
@@ -57,14 +58,34 @@ export function shiftWeekend(iso: string): { d: string; shifted: boolean } {
   return { d: out, shifted: out !== iso };
 }
 
-/** Werktage im Sinne der VOB/B: Montag bis Samstag. */
-export function addWerktage(iso: string, n: number): string {
+/**
+ * § 193 BGB: Fällt das Fristende auf Samstag, Sonntag oder einen am Leistungsort staatlich
+ * anerkannten allgemeinen Feiertag, tritt der nächste Werktag an seine Stelle.
+ */
+export function shiftFrist(iso: string, land = ""): { d: string; shifted: boolean; grund: string } {
+  if (!iso) return { d: "", shifted: false, grund: "" };
+  const d = new Date(iso + "T12:00:00");
+  const gruende: string[] = [];
+  for (let k = 0; k < 10; k++) {
+    const cur = d.toISOString().slice(0, 10), w = d.getDay(), ft = feiertagName(cur, land);
+    if (w === 6) gruende.push("Samstag");
+    else if (w === 0) gruende.push("Sonntag");
+    else if (ft) gruende.push(ft);
+    else break;
+    d.setDate(d.getDate() + 1);
+  }
+  const out = d.toISOString().slice(0, 10);
+  return { d: out, shifted: out !== iso, grund: [...new Set(gruende)].join(", ") };
+}
+
+/** Werktage im Sinne der VOB/B: Montag bis Samstag, ohne gesetzliche Feiertage. */
+export function addWerktage(iso: string, n: number, land = ""): string {
   if (!iso) return "";
   const d = new Date(iso + "T12:00:00");
   let k = 0;
   while (k < n) {
     d.setDate(d.getDate() + 1);
-    if (d.getDay() !== 0) k++;
+    if (d.getDay() !== 0 && !feiertagName(d.toISOString().slice(0, 10), land)) k++;
   }
   return d.toISOString().slice(0, 10);
 }
