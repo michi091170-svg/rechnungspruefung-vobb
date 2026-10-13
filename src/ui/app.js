@@ -92,7 +92,7 @@ function header(p){
         ${p ? `<button class="d" data-a="delproj">${S.confirm === "proj" ? "Wirklich löschen? Erneut tippen" : "Projekt löschen"}</button>` : ""}
       </div>` : ""}
     </div>
-    <div class="store">${S.mode === "db" ? "<b>Gespeichert in deinem Konto</b> – privat, auf allen Geräten verfügbar." : "Gespeichert in diesem Browser. Regelmäßig eine Sicherung herunterladen."} · Texterkennung: ${SAMPLE ? (imagesAvailable() ? "<b>verfügbar</b> (Scans und PDFs)" : "<b>nur für PDFs mit Textebene</b> – Bilderkennung von Scans ist in dieser Ansicht nicht verfügbar") : SAMPLE_CHECKED ? '<span class="neg">nicht verfügbar – App über den claude.ai-Link öffnen und angemeldet sein</span>' : "wird geprüft …"}</div>
+    <div class="store">${S.mode === "db" ? "<b>Gespeichert in deinem Konto</b> – privat, auf allen Geräten verfügbar." : "Gespeichert in diesem Browser – alle Prüffunktionen arbeiten offline. Regelmäßig eine Sicherung herunterladen."} · Texterkennung (KI): ${SAMPLE ? (imagesAvailable() ? "<b>verfügbar</b> (Scans und PDFs)" : "<b>nur für PDFs mit Textebene</b> – Bilderkennung von Scans ist in dieser Ansicht nicht verfügbar") : SAMPLE_CHECKED ? "nur in der Online-Fassung über den claude.ai-Link (angemeldet); Dateien mit Textebene, GAEB, Excel und CSV lassen sich auch hier einlesen" : "wird geprüft …"}</div>
   </header>`;
 }
 function nav(){
