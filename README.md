@@ -32,6 +32,7 @@ src/core/          Rechenkern, rein funktional, TypeScript (strict), vollständi
   model.ts         Voreinstellungen, Beispielprojekt, Schemaversion, Migration, Abgleich mit dem Konto
   calc.ts          kumulierte Rechnungsprüfung, Kürzungskette, Hinweise
   sicherheit.ts    Vertragserfüllungssicherheit und Bürgschaften
+  lokaltext.ts     Auswertung von Seitentext ohne KI (Rechnung, LV, Aufmaß, Nachtrag)
 src/ui/app.js      Oberfläche, Speicherung, Datei-Import (GAEB, Excel, PDF), Texterkennung
 src/ui/styles.css  Gestaltung inkl. Dunkelmodus und Druck
 tests/             Vitest, inkl. Referenzwerte des Beispielprojekts (Golden Master)
@@ -54,7 +55,8 @@ Rauchtest im Browser (benötigt Playwright mit Chromium):
 
 ```bash
 npm run build && node e2e/smoke.mjs dist/index.html
-node e2e/ocr.mjs dist/index.html   # reiner Scan ohne Textebene, Texterkennung auf dem Gerät
+node e2e/ocr.mjs dist/index.html       # reiner Scan, Texterkennung auf dem Gerät, KI bekommt nur Text
+node e2e/offline.mjs dist/index.html   # Desktop ohne KI: Auftrag und Rechnung als Scan einlesen und prüfen
 ```
 
 ## Veröffentlichung als Artifact
@@ -67,7 +69,7 @@ node e2e/ocr.mjs dist/index.html   # reiner Scan ohne Textebene, Texterkennung a
 
 - Läuft ohne Internet. Ohne Internet wird statt der Webschrift die Systemschrift verwendet.
 - Daten liegen im Speicher des Browsers auf diesem Rechner. Regelmäßig über das Menü „Sicherung herunterladen (JSON)“ eine Datei sichern; Browserdaten löschen entfernt auch die Projekte.
-- KI-Auswertung von Unterlagen und Kontospeicher gibt es nur in der claude.ai-Version; dort werden auch reine Scans ohne Bildübertragung gelesen. Die Desktop-Version liest Scans noch nicht automatisch ein. Sicherungen lassen sich zwischen beiden Versionen austauschen.
+- Scans und PDFs (Rechnung, Auftrag mit LV, Aufmaß, Nachtrag) werden auch hier eingelesen: Texterkennung auf dem Gerät, danach Auswertung nach festen Leseregeln ohne KI. Das klappt bei klar gegliederten Tabellen (OZ, Text, Menge, EH, EP, GP in einer Zeile) zuverlässig; Handschrift, verschachtelte Tabellen und Freitext-Vertragsbedingungen liest die KI-Auswertung der claude.ai-Version besser. Kontospeicher gibt es nur dort. Sicherungen lassen sich zwischen beiden Versionen austauschen.
 
 ## Sicherheit der Bibliotheken
 
@@ -79,7 +81,8 @@ node e2e/ocr.mjs dist/index.html   # reiner Scan ohne Textebene, Texterkennung a
 
 Erledigt in 1.1.0: Feiertage je Bundesland, Herkunftskennzeichnung im Prüfvermerk, Programmversion, Schemaversion, Konfliktkopie beim Abgleich, Datenschutz-Hinweis vor der KI-Erkennung, Offline-Fähigkeit.
 
-1. Auswertung erkannter Scans ohne KI (regelbasiert für Rechnungen, LV und Aufmaß), damit die Desktop-Version Scans selbst einlesen kann.
-2. SheetJS auf 0.20.x und pdf.js auf eine aktuelle Hauptversion umstellen.
-3. Oberfläche schrittweise nach TypeScript überführen und Teil-Rendering für große LVs.
-4. Regional begrenzte Feiertage (Gemeindeebene) optional erfassen.
+Erledigt in 1.2.0: Texterkennung auf dem Gerät, Auswertung ohne KI für die Desktop-Version.
+
+1. SheetJS auf 0.20.x und pdf.js auf eine aktuelle Hauptversion umstellen.
+2. Oberfläche schrittweise nach TypeScript überführen und Teil-Rendering für große LVs.
+3. Regional begrenzte Feiertage (Gemeindeebene) optional erfassen.

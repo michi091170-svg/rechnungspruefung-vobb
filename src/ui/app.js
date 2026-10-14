@@ -1,9 +1,9 @@
 // Oberfläche der Rechnungsprüfung. Rechenlogik und Stammdaten liegen in src/core (TypeScript, getestet).
 import {
   ATV, BUNDESLAENDER, GRUNDLAGEN, SCHEMA_VERSION, VOB_FASSUNG_STANDARD, INV_ART, INV_STATUS, NT_STATUS, UEB, UEB_GRUND, UEB_KIND,
-  addDays, addWerktage, calcAll, calcInv, chain, daysBetween, ensureSic, esc,
+  addDays, addWerktage, aufmassAusText, auftragAusText, calcAll, calcInv, chain, daysBetween, ensureSic, esc,
   eur, evalExpr, fmtD, fmtF, fmtIn, fmtN, migrateProject, newProject,
-  mergeSync, nlNT, num, numOrNull, round2, sampleProject, seOn, sicCalc,
+  mergeSync, nachtragAusText, nlNT, num, numOrNull, rechnungAusText, round2, sampleProject, seOn, sicCalc,
   sicHints, toISODate, todayISO, topTerms, uebItemCalc, uebKey, uebResult, uebRules,
   uid, unitKind, yearEnd3,
 } from "../core/index.ts";
@@ -92,7 +92,7 @@ function header(p){
         ${p ? `<button class="d" data-a="delproj">${S.confirm === "proj" ? "Wirklich löschen? Erneut tippen" : "Projekt löschen"}</button>` : ""}
       </div>` : ""}
     </div>
-    <div class="store">${S.mode === "db" ? "<b>Gespeichert in deinem Konto</b> – privat, auf allen Geräten verfügbar." : "Gespeichert in diesem Browser – alle Prüffunktionen arbeiten offline. Regelmäßig eine Sicherung herunterladen."} · Texterkennung (KI): ${SAMPLE ? (imagesAvailable() ? "<b>verfügbar</b> (Scans und PDFs)" : "<b>verfügbar</b> – Scans ohne Textebene werden zuerst auf diesem Gerät gelesen, übertragen wird nur der Text") : SAMPLE_CHECKED ? "nur in der Online-Fassung über den claude.ai-Link (angemeldet); Dateien mit Textebene, GAEB, Excel und CSV lassen sich auch hier einlesen" : "wird geprüft …"}</div>
+    <div class="store">${S.mode === "db" ? "<b>Gespeichert in deinem Konto</b> – privat, auf allen Geräten verfügbar." : "Gespeichert in diesem Browser – alle Prüffunktionen arbeiten offline. Regelmäßig eine Sicherung herunterladen."} · Texterkennung (KI): ${SAMPLE ? (imagesAvailable() ? "<b>verfügbar</b> (Scans und PDFs)" : "<b>verfügbar</b> – Scans ohne Textebene werden zuerst auf diesem Gerät gelesen, übertragen wird nur der Text") : SAMPLE_CHECKED ? "<b>ohne KI</b> – Scans und PDFs werden auf diesem Gerät gelesen und nach festen Regeln ausgewertet; jede Übernahme vorher prüfen. Die KI-Auswertung gibt es in der Online-Fassung über den claude.ai-Link" : "wird geprüft …"}</div>
   </header>`;
 }
 function nav(){
@@ -584,7 +584,7 @@ function reportHTML(p, C, idx){
 ${rows.map(x => `<tr><td>${esc(x.pos.oz)}</td><td>${esc(x.pos.text)}${x.nt ? ` (${esc(x.nt.nr)}${x.ntOk ? "" : " – nicht beauftragt"})` : ""}</td><td>${esc(x.pos.eh)}</td><td class="r">${eur(x.pos.ep)}</td><td class="r">${fmtN(x.an)}${x.a.anSrc === "ki" ? "<sup>K</sup>" : ""}</td><td class="r">${fmtN(x.gp)}${x.a.gpSrc === "ki" ? "<sup>K</sup>" : ""}</td><td class="r">${eur(x.bAN)}</td><td class="r">${eur(x.bGP)}</td><td>${esc([x.a.blatt, x.a.formel, x.a.bem].filter(Boolean).join(" · "))}</td></tr>`).join("")}
 ${num(inv.pauschalAN) || num(inv.pauschalGP) ? `<tr><td colspan="6">Pauschaler Abschlag ohne Positionsaufstellung (kumuliert)</td><td class="r">${eur(num(inv.pauschalAN))}</td><td class="r">${eur(num(inv.pauschalGP))}</td><td>§ 16 Abs. 1 Nr. 1 VOB/B</td></tr>` : ""}
 <tr class="tot"><td colspan="6">Summe netto</td><td class="r">${eur(r.sumAN)}</td><td class="r">${eur(r.sumGP)}</td><td></td></tr></tbody></table>
-${rows.some(x => x.a.anSrc === "ki" || x.a.gpSrc === "ki") ? `<p style="font-size:8.5pt;margin:4px 0 0"><sup>K</sup> Menge aus automatischer Texterkennung (KI) der eingereichten Unterlagen übernommen und danach nicht von Hand geändert. Erkennungsfehler sind möglich; die Werte sind gegen die Originalunterlagen abzugleichen.</p>` : ""}
+${rows.some(x => x.a.anSrc === "ki" || x.a.gpSrc === "ki") ? `<p style="font-size:8.5pt;margin:4px 0 0"><sup>K</sup> Menge aus automatischer Erkennung (KI bzw. Texterkennung ohne KI) der eingereichten Unterlagen übernommen und danach nicht von Hand geändert. Erkennungsfehler sind möglich; die Werte sind gegen die Originalunterlagen abzugleichen.</p>` : ""}
 <h2>Ermittlung des Zahlbetrags</h2>
 <table><thead><tr><th></th><th class="r">AN</th><th class="r">geprüft</th></tr></thead><tbody>
 ${tr("Leistungsstand kumuliert netto", eur(r.cAN.net), eur(r.cGP.net))}
@@ -901,14 +901,15 @@ function toJpeg(canvas, maxBytes){
 }
 async function recognize(invId, opts = {}){
   const p = cp(); const inv = p && p.rechnungen.find(r => r.id === invId); const st = SCAN[invId];
-  if (!SAMPLE || !st || !inv) return;
-  if (!(await kiConsent())) return;
+  if (!st || !inv) return;
+  if (SAMPLE && !(await kiConsent())) return;
   logReset(`Rechnung ${inv.nr}: ${st.name}`);
   const lv = p.positions.map(x => `${x.oz} | ${x.text} | ${x.eh} | EP ${x.ep}`).join("\n").slice(0, 20000);
   const out = []; let failed = false;
   scanCtl = new AbortController();
   try {
-    await ocrDispatch(st.pages, "Rechnung wird gelesen", desc => `Bilder: ${desc}. Es handelt sich um eine eingescannte Bau-Rechnung (Abschlags-, Teilschluss- oder Schlussrechnung nach VOB/B).
+    if (!SAMPLE) await localDispatch(st.pages, "Rechnung wird gelesen", "rechnung", p, out);
+    else await ocrDispatch(st.pages, "Rechnung wird gelesen", desc => `Bilder: ${desc}. Es handelt sich um eine eingescannte Bau-Rechnung (Abschlags-, Teilschluss- oder Schlussrechnung nach VOB/B).
 Extrahiere jede Leistungsposition (Zeile mit Ordnungszahl bzw. Pos.-Nr., Menge, Einheitspreis und Gesamtbetrag) sowie die Summenzeilen.
 Zahlen im Dokument sind deutsch formatiert (1.234,56). Gib sie als JSON-Zahlen mit Punkt als Dezimaltrenner zurück. Nicht lesbare Werte: null. Erfinde nichts.
 "bild" = Nummer des Bildes, in dem die Zeile steht. Koordinaten als Anteil der Größe DIESES Bildes (0 = oben bzw. links, 1 = unten bzw. rechts), drei Nachkommastellen:
@@ -1111,7 +1112,7 @@ function scanSection(p, R, inv){
   <p class="muted" style="font-size:.84rem;margin-top:6px">Gescannte Rechnung einlesen, Positionen automatisch erkennen und dem LV zuordnen. Nach der Prüfung erhalten richtige Positionen einen grünen Haken, gekürzte werden rot durchgestrichen und mit dem geprüften Betrag versehen.</p>
   ${!st && !S.scanBusy ? `<div style="margin:10px 0">${dropZone("Rechnung einlesen", "PDF, JPG oder PNG – Positionen werden automatisch erkannt", `scanpick" data-id="${I}`)}</div>` : ""}
   ${st ? `<p style="font-size:.88rem"><b>${esc(st.name)}</b> · ${st.pages.length} Seite${st.pages.length === 1 ? "" : "n"}</p>` : sc && sc.name ? `<div class="hint info">Erkennung zu „${esc(sc.name)}“ ist gespeichert. Datei erneut auswählen, um die Seiten anzuzeigen und die geprüfte PDF zu erzeugen.</div>` : ""}
-  ${st && !S.scanBusy ? `<div class="row" style="margin-top:10px">${SAMPLE ? `<button class="btn pri" data-a="scanocr" data-id="${I}">${marks.some(m => !m.manual) ? "Positionen neu erkennen" : "Positionen erkennen"}</button>` : `<span class="muted" style="font-size:.84rem">Automatische Texterkennung ist in dieser Ansicht nicht verfügbar – Markierungen per Tipp setzen.</span>`}</div>` : ""}
+  ${st && !S.scanBusy ? `<div class="row" style="margin-top:10px"><button class="btn pri" data-a="scanocr" data-id="${I}">${marks.some(m => !m.manual) ? "Positionen neu erkennen" : "Positionen erkennen"}</button></div>` : ""}
   ${sc && sc.kumuliert === false ? `<div class="hint warn" style="margin-top:10px">Die Rechnung weist offenbar nur den Abrechnungszeitraum aus. Die Prüfung arbeitet kumuliert – Mengen vor der Übernahme mit dem Stand der Vorrechnung zusammenführen.</div>` : ""}
   ${marks.length ? `<div class="tw" data-k="scan" style="margin-top:12px"><table><thead><tr><th>Seite</th><th>OZ lt. Rechnung</th><th>Text</th><th class="r" style="min-width:90px">Menge</th><th class="r" style="min-width:95px">EP</th><th class="r" style="min-width:105px">Betrag</th><th>LV-Zuordnung</th><th>Ergebnis</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
   <p style="font-size:.86rem;margin-top:8px"><span class="tag ok">${nOk} richtig</span> <span class="tag cut">${nCut} gekürzt / abweichend</span></p>
@@ -1263,6 +1264,27 @@ async function ocrDispatch(pages, label, promptFor, opts, out){
   await ocrPagesText(withText, pages, label, promptFor, out);
 }
 
+/* ---------- Auswertung ohne KI: Textebene bzw. Texterkennung, dann feste Leseregeln (src/core/lokaltext.ts) ---------- */
+async function localDispatch(pages, label, kind, p, out){
+  const all = pages.map((_, i) => i);
+  const scans = all.filter(i => !pageHasText(pages[i]));
+  if (scans.length) { try { await deviceOcr(pages, scans, label); } catch(e){ if (e && e.code === "cancelled") throw e; logAdd("cut", "Texterkennung auf diesem Gerät nicht möglich: " + ((e && e.message) || String(e))); if (!all.some(i => pageHasText(pages[i]))) { const err = new Error(DEVOCR_FAIL_MSG); err.code = "no_image"; throw err; } } }
+  const withText = all.filter(i => pageHasText(pages[i]));
+  if (!withText.length) { const err = new Error(NOIMG_MSG); err.code = "no_image"; throw err; }
+  logAdd("info", "Verfahren: Auswertung ohne KI nach festen Leseregeln – erkannte Werte sind Vorschläge und am Original zu prüfen");
+  const lineMap = {};
+  const seiten = withText.map(i => ({ zeilen: pages[i].lines.map((l, k) => { const id = `S${i + 1}Z${k + 1}`; lineMap[id] = { page:i, y:l.y, h:l.h, x0:l.x0, x1:l.x1, text:l.text }; return { id, text:l.text }; }) }));
+  const lv = p ? p.positions.map(x => ({ oz:x.oz, eh:x.eh })) : [];
+  const d = kind === "rechnung" ? rechnungAusText(seiten, lv) : kind === "auftrag" ? auftragAusText(seiten) : kind === "aufmass" ? aufmassAusText(seiten) : kind === "nachtrag" ? nachtragAusText(seiten) : null;
+  if (!d) throw new Error("Unbekannte Unterlagenart");
+  const rows = d.zeilen || d.positionen || [];
+  if (kind === "rechnung") {
+    const bad = d.zeilen.filter(z => !z.stimmig).length;
+    logAdd(d.zeilen.length ? "info" : "cut", `${d.zeilen.length} Positionszeilen und ${d.summen.length} Summenzeilen gefunden${bad ? `; bei ${bad} Zeile${bad === 1 ? "" : "n"} ergibt Menge × EP nicht den Betrag – Lesung am Original prüfen` : ""}`);
+  } else logAdd(rows.length ? "info" : "cut", `${rows.length} ${kind === "aufmass" ? "Aufmaßzeilen" : "Positionen"} gefunden`);
+  out.push({ d, metas:null, lineMap });
+}
+
 /* ---------- Texterkennung auf dem Gerät (Tesseract, eingebettet): Scans ohne Textebene, kein Bild verlässt das Gerät ---------- */
 const DEVOCR_FAIL_MSG = "Reiner Scan ohne Textebene – die Texterkennung auf diesem Gerät ließ sich in diesem Browser nicht starten (Details im Protokoll). Abhilfe: die App in einem aktuellen Chrome, Edge oder Firefox öffnen oder den Scan als durchsuchbare PDF speichern (Texterkennung/OCR am Kopierer bzw. Scanner, Adobe Scan, Microsoft Lens oder Acrobat „Text erkennen“) und erneut einlesen.";
 const DEVOCR_LOW = 75;
@@ -1395,12 +1417,11 @@ async function ocrPages(pages, label, promptFor, opts, out){
   return out;
 }
 async function withOCR(files, label, promptFor, onDone, opts = {}){
-  if (!SAMPLE) { toast("Automatische Texterkennung ist in dieser Ansicht nicht verfügbar – App über den claude.ai-Link öffnen."); return; }
-  if (!(await kiConsent())) return;
+  if (SAMPLE && !(await kiConsent())) return;
   logReset(`${label}: ${files.map(f => f.name).join(", ")}`);
   scanCtl = new AbortController(); S.scanBusy = "Datei wird geladen …"; render();
   const res = []; let failed = false;
-  try { const pages = await renderFilesPages(files); logAdd("info", `${pages.length} Seite${pages.length === 1 ? "" : "n"} geladen`); await ocrDispatch(pages, label, promptFor, opts, res); }
+  try { const pages = await renderFilesPages(files); logAdd("info", `${pages.length} Seite${pages.length === 1 ? "" : "n"} geladen`); if (SAMPLE) await ocrDispatch(pages, label, promptFor, opts, res); else await localDispatch(pages, label, opts.local, cp(), res); }
   catch(e){ failed = true; logAdd("cut", ocrErr(e)); toast(ocrErr(e)); }
   scanCtl = null; S.scanBusy = null;
   if (res.length) { try { onDone(res, failed); } catch(e){ logAdd("cut", "Verarbeitung fehlgeschlagen: " + (e && e.message)); } }
@@ -1442,7 +1463,7 @@ vertragsstrafe, ausfuehrungsfristen und weitere_hinweise (z. B. Abnahme, Gewähr
     const v = {}; const rows = [];
     res.forEach(({ d }) => { const vv = d && d.vertrag; if (vv && typeof vv === "object") for (const [k, x] of Object.entries(vv)) if (x !== null && x !== "" && v[k] === undefined) v[k] = x; posRowsFrom(d && d.positionen).forEach(r => rows.push(r)); });
     openAuftragPreview(v, rows, `Auftragsunterlagen „${files.map(f => f.name).join(", ")}“${partial ? " (unvollständig)" : ""}`);
-  });
+  }, { local:"auftrag" });
 }
 function openAuftragPreview(v, rows, source){
   const p = cp();
@@ -1554,7 +1575,7 @@ gemeinsam = true, wenn das Aufmaß von Auftraggeber- und Auftragnehmerseite unte
     if (!G.length && !unmatched.length) { logAdd("cut", "Keine Aufmaßzeilen erkannt."); toast("Keine Aufmaßzeilen erkannt – siehe Protokoll"); return; }
     logAdd(G.length ? "ok" : "cut", `${lines.length} Aufmaßzeilen erkannt, ${G.length} Positionen zugeordnet${unmatched.length ? `, ${unmatched.length} Zeilen ohne Zuordnung` : ""}.`);
     S.modal = { kind:"aufmass", invId, groups:G, unmatched, gem, partial, source: files.map(f => f.name).join(", ") }; render();
-  }, { split:false, perCall:2 });
+  }, { split:false, perCall:2, local:"aufmass" });
 }
 function aufmassModal(m){
   const p = cp(); const inv = p.rechnungen.find(r => r.id === m.invId); if (!inv) return "";
@@ -1608,7 +1629,7 @@ anzeige_datum = Datum einer im Angebot genannten vorherigen Ankündigung bzw. Me
     S.modal = { kind:"nachtrag", partial, source: files.map(f => f.name).join(", "), rows,
       n: { nr: n.nr ? String(n.nr).slice(0,20) : "NT " + String(p.nachtraege.length + 1).padStart(2, "0"), titel: String(n.titel || "").slice(0,160), datum: toISODate(n.datum) || "", anzeige: toISODate(n.anzeige_datum) || "", grundlage: GRUNDLAGEN.some(g => g[0] === n.grundlage) ? n.grundlage : "2-5", summe: numOrNull(n.summe_netto), begr: String(n.begruendung || "").slice(0, 400) } };
     render();
-  });
+  }, { local:"nachtrag" });
 }
 function nachtragModal(m){
   const n = m.n; const posSum = round2(m.rows.reduce((s, r) => s + (r.menge != null && r.ep != null ? round2(r.menge * r.ep) : 0), 0));
@@ -1670,8 +1691,7 @@ async function newInvoiceFromFile(file){
   const inv = createInvoice(p, "Abschlagsrechnung");
   S.tab = "re"; S.inv = inv.id; S.placeMode = null; S.editMarks = false; render(); window.scrollTo(0, 0);
   const ok = await loadScan(file, inv.id);
-  if (ok && SAMPLE) await recognize(inv.id, { auto:true });
-  else if (ok) toast("Rechnung angelegt – automatische Erkennung ist in dieser Ansicht nicht verfügbar.");
+  if (ok) await recognize(inv.id, { auto:true });
 }
 let PENDING_FILES = [];
 function dropTarget(){
@@ -1706,7 +1726,7 @@ async function handleFiles(list, target){
     if (t === "lv") { await recognizeAuftrag(scans); return; }
     if (t === "nt") { await recognizeNachtrag(scans); return; }
     if (t === "am") { if (S.inv) await recognizeAufmass(scans, S.inv); return; }
-    if (t === "inv") { const id = S.inv; const ok = await loadScan(scans[0], id); if (ok && SAMPLE) await recognize(id, { auto:true }); for (const f of scans.slice(1)) await newInvoiceFromFile(f); return; }
+    if (t === "inv") { const id = S.inv; const ok = await loadScan(scans[0], id); if (ok) await recognize(id, { auto:true }); for (const f of scans.slice(1)) await newInvoiceFromFile(f); return; }
     for (const f of scans) await newInvoiceFromFile(f);
   } catch(e){ toast(e && e.message ? e.message : "Datei konnte nicht gelesen werden"); S.scanBusy = null; render(); }
 }
