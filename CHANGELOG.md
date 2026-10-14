@@ -1,5 +1,12 @@
 # Änderungen
 
+## 1.2.0 – 2026-10-14
+
+- Reine Scans ohne Textebene (PDF, JPG, PNG) werden jetzt auch dann gelesen, wenn die KI-Bilderkennung in der Ansicht nicht verfügbar ist: Die Texterkennung (Tesseract 5, deutsche Sprachdaten) läuft eingebettet und ohne Internet auf dem Gerät; an die KI geht nur der erkannte Text, kein Bild. Scanseiten werden dafür mit rund 300 dpi neu gezeichnet.
+- Protokoll nennt je Seite die mittlere Erkennungssicherheit und warnt unter 75 %; die KI wird auf typische Lesefehler (0/O, 1/l, m²/m?) hingewiesen und soll unsichere Zahlen offenlassen.
+- Neues Testskript `e2e/ocr.mjs`: Bild-PDF ohne Textebene, ohne Internet, ohne Bildübertragung.
+- Auswertung ohne KI (Desktop-Fassung und jede Ansicht ohne KI): Rechnungen, Auftragsschreiben mit LV, Aufmaßblätter und Nachtragsangebote werden nach festen Leseregeln ausgewertet (`src/core/lokaltext.ts`). Positionszeilen werden über Menge × EP = Betrag gegengeprüft, verlesene Einheiten (m?2, m}) über das LV aufgelöst; Vertragsangaben werden nur bei eindeutigem Wortlaut vorgeschlagen (z. B. VOB/B nur bei „Vertragsbestandteil/vereinbart“, nicht bei bloßer Erwähnung). Alle Vorschläge laufen wie bisher über die Übernahme-Ansicht und sind im Prüfvermerk mit „K“ gekennzeichnet. Test: `e2e/offline.mjs`.
+
 ## 1.1.0 – 2026-10-12
 
 - Fristende nach § 193 BGB berücksichtigt jetzt gesetzliche Feiertage; Bundesland der Baustelle unter „Vertrag“ wählbar. Werktagsfristen (§ 17 Abs. 7 VOB/B) ebenso.

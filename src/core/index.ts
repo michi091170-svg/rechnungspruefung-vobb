@@ -6,3 +6,4 @@ export * from "./vobc";
 export * from "./model";
 export * from "./calc";
 export * from "./sicherheit";
+export * from "./lokaltext";
