@@ -92,7 +92,7 @@ function header(p){
         ${p ? `<button class="d" data-a="delproj">${S.confirm === "proj" ? "Wirklich löschen? Erneut tippen" : "Projekt löschen"}</button>` : ""}
       </div>` : ""}
     </div>
-    <div class="store">${S.mode === "db" ? "<b>Gespeichert in deinem Konto</b> – privat, auf allen Geräten verfügbar." : "Gespeichert in diesem Browser – alle Prüffunktionen arbeiten offline. Regelmäßig eine Sicherung herunterladen."} · Texterkennung (KI): ${SAMPLE ? (imagesAvailable() ? "<b>verfügbar</b> (Scans und PDFs)" : "<b>nur für PDFs mit Textebene</b> – Bilderkennung von Scans ist in dieser Ansicht nicht verfügbar") : SAMPLE_CHECKED ? "nur in der Online-Fassung über den claude.ai-Link (angemeldet); Dateien mit Textebene, GAEB, Excel und CSV lassen sich auch hier einlesen" : "wird geprüft …"}</div>
+    <div class="store">${S.mode === "db" ? "<b>Gespeichert in deinem Konto</b> – privat, auf allen Geräten verfügbar." : "Gespeichert in diesem Browser – alle Prüffunktionen arbeiten offline. Regelmäßig eine Sicherung herunterladen."} · Texterkennung (KI): ${SAMPLE ? (imagesAvailable() ? "<b>verfügbar</b> (Scans und PDFs)" : "<b>verfügbar</b> – Scans ohne Textebene werden zuerst auf diesem Gerät gelesen, übertragen wird nur der Text") : SAMPLE_CHECKED ? "nur in der Online-Fassung über den claude.ai-Link (angemeldet); Dateien mit Textebene, GAEB, Excel und CSV lassen sich auch hier einlesen" : "wird geprüft …"}</div>
   </header>`;
 }
 function nav(){
@@ -856,7 +856,9 @@ async function renderFilePages(file, onProgress){
       const ctx = c.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height);
       await pg.render({ canvasContext:ctx, viewport:vp }).promise;
       const lines = await pageLines(pg, v1);
-      pages.push({ canvas:c, wPt:v1.width, hPt:v1.height, lines });
+      // Für die Texterkennung auf dem Gerät wird ein Scan mit rund 300 dpi (A4: 2480 Pixel Breite) neu gezeichnet
+      const hires = async () => { const v = pg.getViewport({ scale: Math.min(5, 2480 / v1.width) }); const h = document.createElement("canvas"); h.width = Math.round(v.width); h.height = Math.round(v.height); const hx = h.getContext("2d"); hx.fillStyle = "#fff"; hx.fillRect(0, 0, h.width, h.height); await pg.render({ canvasContext:hx, viewport:v }).promise; return h; };
+      pages.push({ canvas:c, wPt:v1.width, hPt:v1.height, lines, hires });
       onProgress && onProgress(i, n);
     }
     if (doc.numPages > 40) toast("Nur die ersten 40 Seiten wurden geladen");
@@ -866,7 +868,8 @@ async function renderFilePages(file, onProgress){
     const sc = Math.min(1, 1800 / img.naturalWidth); const c = document.createElement("canvas");
     c.width = Math.round(img.naturalWidth * sc); c.height = Math.round(img.naturalHeight * sc);
     const ctx = c.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0,0,c.width,c.height); ctx.drawImage(img, 0, 0, c.width, c.height);
-    pages.push({ canvas:c, wPt:595.28, hPt:595.28 * c.height / c.width });
+    const hires = async () => { const k = Math.min(1, 3000 / img.naturalWidth); if (k <= sc) return c; const h = document.createElement("canvas"); h.width = Math.round(img.naturalWidth * k); h.height = Math.round(img.naturalHeight * k); const hx = h.getContext("2d"); hx.fillStyle = "#fff"; hx.fillRect(0, 0, h.width, h.height); hx.drawImage(img, 0, 0, h.width, h.height); return h; };
+    pages.push({ canvas:c, wPt:595.28, hPt:595.28 * c.height / c.width, lines:[], hires });
   } else throw new Error("Bitte eine PDF-, JPG- oder PNG-Datei wählen");
   return pages;
 }
@@ -1177,7 +1180,7 @@ async function parseTable(file){
     .filter(r => r.oz && (r.menge != null || r.ep != null));
 }
 /* ---------- Texterkennung: Auftragsschreiben, Aufmaßblätter, Nachtragsangebote ---------- */
-function ocrErr(e){ const m = { not_granted:"Die Texterkennung wurde nicht erlaubt.", rate_limited:"Zu viele Anfragen – bitte kurz warten und erneut versuchen.", invalid_json:"Die Antwort war nicht auswertbar – bitte erneut versuchen.", cancelled:"Erkennung abgebrochen.", no_image:NOIMG_MSG }; if (isImageBlocked(e) && !(e && e.code === "no_image")) return "Bilderkennung ist in dieser Ansicht nicht verfügbar. " + "Abhilfe: " + NOIMG_MSG.split("Abhilfe: ")[1]; return m[e && e.code] || (e && e.message) || "Texterkennung fehlgeschlagen."; }
+function ocrErr(e){ const m = { not_granted:"Die Texterkennung wurde nicht erlaubt.", rate_limited:"Zu viele Anfragen – bitte kurz warten und erneut versuchen.", invalid_json:"Die Antwort war nicht auswertbar – bitte erneut versuchen.", cancelled:"Erkennung abgebrochen.", no_image:NOIMG_MSG }; if (isImageBlocked(e) && !(e && e.code === "no_image")) return "Bilderkennung ist in dieser Ansicht nicht verfügbar. " + NOIMG_MSG.slice(NOIMG_MSG.indexOf("Abhilfe:")); return m[e && e.code] || (e && e.message) || "Texterkennung fehlgeschlagen."; }
 async function renderFilesPages(files){
   const all = [];
   for (const f of files) { const pg = await renderFilePages(f, (i, n) => { S.scanBusy = `„${f.name}“: Seite ${i} von ${n} geladen …`; render(); }); pg.forEach(x => all.push(x)); }
@@ -1187,7 +1190,7 @@ async function renderFilesPages(files){
 let IMG_BLOCKED = false;
 const imagesAvailable = () => !IMG_BLOCKED && !!(SAMPLE_LIMITS && SAMPLE_LIMITS.images);
 const pageHasText = pg => !!(pg && pg.lines && pg.lines.reduce((s, l) => s + l.text.length, 0) > 40);
-const NOIMG_MSG = "Reiner Scan ohne Textebene – die Bilderkennung ist in dieser Ansicht nicht verfügbar. Abhilfe: den Scan als durchsuchbare PDF speichern (Texterkennung/OCR am Kopierer bzw. Scanner, Adobe Scan, Microsoft Lens oder Acrobat „Text erkennen“) und erneut einlesen. Alternativ den Scan im Claude-Chat hochladen und dort eine Projektdatei (.json) erstellen lassen – diese über „Mehr → Sicherung einlesen“ oder per Drag & Drop einspielen.";
+const NOIMG_MSG = "Auf dem Scan wurde kein lesbarer Text erkannt. Abhilfe: den Scan mit mindestens 300 dpi und gerade eingelegt neu erstellen oder als durchsuchbare PDF speichern (Texterkennung/OCR am Kopierer bzw. Scanner, Adobe Scan, Microsoft Lens oder Acrobat „Text erkennen“) und erneut einlesen. Alternativ den Scan im Claude-Chat hochladen und dort eine Projektdatei (.json) erstellen lassen – diese über „Mehr → Sicherung einlesen“ oder per Drag & Drop einspielen.";
 async function pageLines(pg, v1){
   let tc; try { tc = await pg.getTextContent(); } catch(e){ return []; }
   const items = [];
@@ -1197,6 +1200,10 @@ async function pageLines(pg, v1){
     const [vx, vy] = v1.convertToViewportPoint(tx, ty); const [vx1] = v1.convertToViewportPoint(tx + (it.width || 0), ty);
     items.push({ x:Math.min(vx, vx1) / v1.width, x1:Math.max(vx, vx1) / v1.width, y:(vy - fh * 0.35) / v1.height, h:fh / v1.height, s:it.str });
   }
+  return groupLines(items);
+}
+/* Wortstücke ({x, x1, y, h, s} als Anteil der Seite) zu Zeilen zusammenfassen; Spaltenabstände als Leerzeichen */
+function groupLines(items){
   items.sort((a, b) => a.y - b.y || a.x - b.x);
   const lines = [];
   for (const it of items) { let L = lines.find(l => Math.abs(l.y - it.y) < Math.max(0.004, it.h * 0.45)); if (!L) { L = { y:it.y, h:it.h, parts:[] }; lines.push(L); } L.parts.push(it); }
@@ -1206,15 +1213,16 @@ async function pageLines(pg, v1){
     return { y:L.y, h:L.h, x0:L.parts[0].x, x1:Math.max(...L.parts.map(q => q.x1)), text:txt.trim() };
   }).filter(l => l.text).sort((a, b) => a.y - b.y);
 }
+const OCRMODE_NOTE = "\nHinweis: Der Text von Seiten mit dem Vermerk (Texterkennung) stammt aus einer automatischen Texterkennung eines Scans. Einzelne Zeichen können falsch gelesen sein (z. B. 0/O, 1/l/I, 5/S, 8/B, Komma/Punkt). Hochgestellte Einheiten (m², m³) erscheinen oft als m?, m}, m2 oder m3 – ordne sie über das LV zu. Übernimm Zahlen nur, wenn sie eindeutig sind – sonst null; rechne Beträge nicht passend.";
 const TEXTMODE_NOTE = '\nTextmodus: Gib bei Positionen, Zeilen und Summen zusätzlich das Feld "zeile" mit der Kennung der Zeile an, in der die Beträge stehen (z. B. "S1Z12"). Die Felder "bild", "y", "h", "x_links" und "x_rechts" entfallen.';
 async function ocrBatchText(idxs, pages, promptFor, depth = 0){
   const lineMap = {};
-  const blocks = idxs.map(i => `=== Seite ${i + 1} ===\n` + pages[i].lines.map((l, k) => { const id = `S${i + 1}Z${k + 1}`; lineMap[id] = { page:i, y:l.y, h:l.h, x0:l.x0, x1:l.x1, text:l.text }; return `${id}: ${l.text}`; }).join("\n")).join("\n\n");
+  const blocks = idxs.map(i => `=== Seite ${i + 1}${pages[i].ocr ? " (Texterkennung)" : ""} ===\n` + pages[i].lines.map((l, k) => { const id = `S${i + 1}Z${k + 1}`; lineMap[id] = { page:i, y:l.y, h:l.h, x0:l.x0, x1:l.x1, text:l.text }; return `${id}: ${l.text}`; }).join("\n")).join("\n\n");
   const a = idxs[0] + 1, b = idxs[idxs.length - 1] + 1; const pl = a === b ? `Seite ${a}` : `Seite ${a}–${b}`;
-  const desc = `keine – stattdessen folgt unten der aus der PDF extrahierte Text (${pl}). Jede Zeile beginnt mit einer Kennung S<Seite>Z<Zeile>; Tabellenspalten sind durch Leerzeichen getrennt`;
+  const desc = `keine – stattdessen folgt unten der aus der PDF extrahierte bzw. per Texterkennung gelesene Text (${pl}). Jede Zeile beginnt mit einer Kennung S<Seite>Z<Zeile>; Tabellenspalten sind durch Leerzeichen getrennt`;
   let r, parsed;
   try {
-    r = await SAMPLE(promptFor(desc) + TEXTMODE_NOTE + "\n\nAntworte ausschließlich mit dem JSON-Objekt, ohne Erläuterungen und ohne Markdown.\n\n--- TEXT ---\n" + blocks, { signal:scanCtl.signal, cache:false });
+    r = await SAMPLE(promptFor(desc) + TEXTMODE_NOTE + (idxs.some(i => pages[i].ocr) ? OCRMODE_NOTE : "") + "\n\nAntworte ausschließlich mit dem JSON-Objekt, ohne Erläuterungen und ohne Markdown.\n\n--- TEXT ---\n" + blocks, { signal:scanCtl.signal, cache:false });
     parsed = tolerantJSON(r.text);
   } catch(e){
     if (e && e.code === "invalid_json" && idxs.length > 1 && depth < 2) { logAdd("warn", `${pl}: Antwort nicht auswertbar – Seiten werden einzeln wiederholt`); const m = Math.ceil(idxs.length / 2); return [...await ocrBatchText(idxs.slice(0, m), pages, promptFor, depth + 1), ...await ocrBatchText(idxs.slice(m), pages, promptFor, depth + 1)]; }
@@ -1223,7 +1231,7 @@ async function ocrBatchText(idxs, pages, promptFor, depth = 0){
   }
   if ((r.truncated || parsed.salvaged) && idxs.length > 1 && depth < 2) { logAdd("warn", `${pl}: Antwort zu lang – Seiten werden einzeln wiederholt`); const m = Math.ceil(idxs.length / 2); return [...await ocrBatchText(idxs.slice(0, m), pages, promptFor, depth + 1), ...await ocrBatchText(idxs.slice(m), pages, promptFor, depth + 1)]; }
   const d = parsed.value || {}; const n = (Array.isArray(d.zeilen) ? d.zeilen.length : 0) + (Array.isArray(d.positionen) ? d.positionen.length : 0);
-  logAdd(r.truncated || parsed.salvaged ? "warn" : "info", `${pl}: ${n} Positionen/Zeilen gelesen (Textebene)${r.truncated || parsed.salvaged ? " – Antwort unvollständig, lesbare Teile übernommen" : ""}`);
+  logAdd(r.truncated || parsed.salvaged ? "warn" : "info", `${pl}: ${n} Positionen/Zeilen gelesen (${idxs.some(i => pages[i].ocr) ? "Text aus Texterkennung" : "Textebene"})${r.truncated || parsed.salvaged ? " – Antwort unvollständig, lesbare Teile übernommen" : ""}`);
   return [{ d, metas:null, lineMap }];
 }
 async function ocrPagesText(idxs, pages, label, promptFor, out){
@@ -1234,23 +1242,79 @@ async function ocrPagesText(idxs, pages, label, promptFor, out){
 }
 const isImageBlocked = e => /image/i.test(String((e && (e.message || e.code)) || "")) && !/json/i.test(String(e && e.code || ""));
 async function ocrDispatch(pages, label, promptFor, opts, out){
-  const all = pages.map((_, i) => i), withText = all.filter(i => pageHasText(pages[i]));
-  let mode = withText.length === pages.length ? "text" : imagesAvailable() ? "image" : withText.length ? "text" : "none";
-  if (mode === "image") {
+  const all = pages.map((_, i) => i);
+  if (!all.every(i => pageHasText(pages[i])) && imagesAvailable()) {
     logAdd("info", "Verfahren: Bilderkennung der Seiten");
     try { await ocrPages(pages, label, promptFor, opts, out); return; }
     catch(e){
       if (!isImageBlocked(e)) throw e;
       IMG_BLOCKED = true; out.length = 0; render();
-      logAdd("warn", "Bilderkennung ist in dieser Ansicht nicht verfügbar – es wird die Textebene der PDF verwendet.");
-      mode = withText.length ? "text" : "none";
+      logAdd("warn", "Bilderkennung ist in dieser Ansicht nicht verfügbar – Scans werden auf diesem Gerät gelesen.");
     }
   }
-  if (mode === "none") { const err = new Error(NOIMG_MSG); err.code = "no_image"; throw err; }
-  logAdd("info", "Verfahren: Textebene der PDF (exakte Zeilenpositionen)");
+  const scans = all.filter(i => !pageHasText(pages[i]));
+  let devErr = null;
+  if (scans.length) { try { await deviceOcr(pages, scans, label); } catch(e){ if (e && e.code === "cancelled") throw e; devErr = e; logAdd("cut", "Texterkennung auf diesem Gerät nicht möglich: " + ((e && e.message) || String(e))); } }
+  const withText = all.filter(i => pageHasText(pages[i]));
+  if (!withText.length) { const err = new Error(devErr ? DEVOCR_FAIL_MSG : NOIMG_MSG); err.code = "no_image"; throw err; }
+  logAdd("info", withText.some(i => pages[i].ocr) ? "Verfahren: Text der Seiten (Textebene bzw. Texterkennung auf diesem Gerät)" : "Verfahren: Textebene der PDF (exakte Zeilenpositionen)");
   const missing = all.filter(i => !pageHasText(pages[i]));
-  if (missing.length) logAdd("cut", `Seite ${missing.map(i => i + 1).join(", ")}: keine Textebene (reiner Scan) – ${imagesAvailable() ? "nicht ausgewertet" : "in dieser Ansicht nicht lesbar. " + "Abhilfe: " + NOIMG_MSG.split("Abhilfe: ")[1]}`);
+  if (missing.length) logAdd("cut", `Seite ${missing.map(i => i + 1).join(", ")}: kein Text erkannt – nicht ausgewertet. ${NOIMG_MSG.slice(NOIMG_MSG.indexOf("Abhilfe:"))}`);
   await ocrPagesText(withText, pages, label, promptFor, out);
+}
+
+/* ---------- Texterkennung auf dem Gerät (Tesseract, eingebettet): Scans ohne Textebene, kein Bild verlässt das Gerät ---------- */
+const DEVOCR_FAIL_MSG = "Reiner Scan ohne Textebene – die Texterkennung auf diesem Gerät ließ sich in diesem Browser nicht starten (Details im Protokoll). Abhilfe: die App in einem aktuellen Chrome, Edge oder Firefox öffnen oder den Scan als durchsuchbare PDF speichern (Texterkennung/OCR am Kopierer bzw. Scanner, Adobe Scan, Microsoft Lens oder Acrobat „Text erkennen“) und erneut einlesen.";
+const DEVOCR_LOW = 75;
+function tessWorkerURL(){
+  const t = id => { const el = document.getElementById(id); return el ? el.textContent : ""; };
+  const worker = t("tess-worker"), core = t("tess-core"), deu = t("tess-deu").trim();
+  if (!worker || !core || !deu) return null;
+  // Die Sprachdaten werden im Worker statt aus dem Netz aus dem eingebetteten Block geliefert
+  const boot = `var __tessDeu=${JSON.stringify(deu)},__tessFetch=self.fetch;self.fetch=function(u){if(/deu\.traineddata/.test(String(u))){var b=atob(__tessDeu),a=new Uint8Array(b.length);for(var i=0;i<b.length;i++)a[i]=b.charCodeAt(i);return Promise.resolve(new Response(a));}return __tessFetch.apply(self,arguments);};\n`;
+  return URL.createObjectURL(new Blob([boot, core, "\n;", worker], { type:"application/javascript" }));
+}
+async function deviceOcr(pages, idxs, label){
+  if (!window.Tesseract) throw new Error("Texterkennungs-Bibliothek nicht geladen");
+  if (typeof WebAssembly !== "object" || typeof Worker !== "function") throw new Error("Browser ohne WebAssembly bzw. Web Worker");
+  let cur = 0, lastPaint = 0;
+  const logger = m => { if (m && m.status === "recognizing text" && Date.now() - lastPaint > 400) { lastPaint = Date.now(); S.scanBusy = `${label} – Seite ${idxs[cur] + 1} wird auf diesem Gerät gelesen (${Math.round((m.progress || 0) * 100)} %) …`; render(); } };
+  S.scanBusy = `${label} – Texterkennung wird gestartet …`; render();
+  const url = tessWorkerURL();
+  const opts = url ? { workerPath:url, workerBlobURL:false, cacheMethod:"none", logger } : { cacheMethod:"none", logger };
+  const worker = await window.Tesseract.createWorker("deu", 1, opts);
+  const stop = () => worker.terminate().catch(() => {});
+  const onAbort = () => stop(); scanCtl && scanCtl.signal.addEventListener("abort", onAbort);
+  try {
+    await worker.setParameters({ preserve_interword_spaces:"1", user_defined_dpi:"300" });
+    for (cur = 0; cur < idxs.length; cur++) {
+      if (scanCtl && scanCtl.signal.aborted) { const e = new Error("Erkennung abgebrochen."); e.code = "cancelled"; throw e; }
+      const pg = pages[idxs[cur]];
+      S.scanBusy = `${label} – Seite ${idxs[cur] + 1} wird auf diesem Gerät gelesen …`; render();
+      const c = pg.hires ? await pg.hires() : pg.canvas;
+      const { data } = await worker.recognize(c, {}, { blocks:true, text:false });
+      const r = ocrLines(data && data.blocks, c.width, c.height);
+      pg.lines = r.lines; pg.ocr = { conf:r.conf, words:r.words };
+      const lvl = !r.lines.length ? "cut" : r.conf < DEVOCR_LOW ? "warn" : "info";
+      logAdd(lvl, `Seite ${idxs[cur] + 1}: auf diesem Gerät gelesen – ${r.lines.length} Zeilen, mittlere Erkennungssicherheit ${r.conf} %${r.conf < DEVOCR_LOW && r.lines.length ? " – Zahlen besonders sorgfältig am Original prüfen" : ""}`);
+    }
+  } finally { scanCtl && scanCtl.signal.removeEventListener("abort", onAbort); await stop(); if (url) URL.revokeObjectURL(url); }
+}
+/* Tesseract-Ergebnis (Blöcke → Absätze → Zeilen → Wörter) in Zeilen wie bei der PDF-Textebene umrechnen.
+   Tabellenspalten liegen oft in getrennten Blöcken; deshalb werden die Wörter neu nach ihrer Zeilenhöhe gruppiert. */
+function ocrLines(blocks, W, H){
+  const items = []; let cs = 0, n = 0;
+  for (const b of blocks || []) for (const pa of b.paragraphs || []) for (const ln of pa.lines || []) {
+    const lb = ln.bbox || {}; const y = ((lb.y0 + lb.y1) / 2) / H, h = Math.max(1, lb.y1 - lb.y0) / H;
+    for (const w of ln.words || []) {
+      const t = String(w.text || "").trim(); if (!t || !w.bbox) continue;
+      if ((w.confidence ?? 0) < 20 && !/[0-9A-Za-zÄÖÜäöüß]/.test(t)) continue;
+      cs += (w.confidence ?? 0) * t.length; n += t.length;
+      items.push({ x:w.bbox.x0 / W, x1:w.bbox.x1 / W, y, h, s:t + " " });
+    }
+  }
+  const lines = groupLines(items).map(l => Object.assign(l, { text:l.text.replace(/ {4,}/g, "   ").replace(/(\S) {2}(?=\S)/g, "$1 ").replace(/ +$/, "") }));
+  return { lines, conf: n ? Math.round(cs / n) : 0, words: items.length };
 }
 
 /* ---------- Erkennungskern: Seitenhälften, robuste JSON-Auswertung, Protokoll ---------- */

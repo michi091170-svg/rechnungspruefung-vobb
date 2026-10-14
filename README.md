@@ -2,7 +2,7 @@
 
 Web-App für die externe Bauleitung: kumulierte Prüfung von Abschlags-, Teilschluss- und Schlussrechnungen nach VOB/B, mit Aufmaß und Übermessung nach VOB/C, Nachtragsmanagement, Einbehalten, Skonto, Bauabzugsteuer, Sicherheiten und Prüfvermerk.
 
-Der Build erzeugt **eine einzige HTML-Datei** (`dist/index.html`) mit allen Bibliotheken. Sie läuft ohne Internet lokal im Browser (z. B. vom Desktop) oder als claude.ai-Artifact; dort kommen Kontospeicher über mehrere Geräte und KI-Texterkennung von Scans hinzu.
+Der Build erzeugt **eine einzige HTML-Datei** (`dist/index.html`) mit allen Bibliotheken. Sie läuft ohne Internet lokal im Browser (z. B. vom Desktop) oder als claude.ai-Artifact; dort kommen Kontospeicher über mehrere Geräte und die KI-Auswertung von Unterlagen hinzu. Scans ohne Textebene liest eine eingebettete Texterkennung (Tesseract, deutsch) direkt auf dem Gerät; an die KI geht dann nur der Text.
 
 ## Fachliche Grundlagen und Grenzen
 
@@ -54,6 +54,7 @@ Rauchtest im Browser (benötigt Playwright mit Chromium):
 
 ```bash
 npm run build && node e2e/smoke.mjs dist/index.html
+node e2e/ocr.mjs dist/index.html   # reiner Scan ohne Textebene, Texterkennung auf dem Gerät
 ```
 
 ## Veröffentlichung als Artifact
@@ -66,10 +67,11 @@ npm run build && node e2e/smoke.mjs dist/index.html
 
 - Läuft ohne Internet. Ohne Internet wird statt der Webschrift die Systemschrift verwendet.
 - Daten liegen im Speicher des Browsers auf diesem Rechner. Regelmäßig über das Menü „Sicherung herunterladen (JSON)“ eine Datei sichern; Browserdaten löschen entfernt auch die Projekte.
-- KI-Texterkennung und Kontospeicher gibt es nur in der claude.ai-Version. Sicherungen lassen sich zwischen beiden Versionen austauschen.
+- KI-Auswertung von Unterlagen und Kontospeicher gibt es nur in der claude.ai-Version; dort werden auch reine Scans ohne Bildübertragung gelesen. Die Desktop-Version liest Scans noch nicht automatisch ein. Sicherungen lassen sich zwischen beiden Versionen austauschen.
 
 ## Sicherheit der Bibliotheken
 
+- Tesseract.js 7.0.0 mit Rechenkern 7.0.0 (Apache-2.0) und Sprachdaten `deu` 4.0.0_best_int laufen in einem Web Worker; Sprachdaten werden aus der Datei geliefert, nicht aus dem Netz.
 - pdf.js 3.11.174 wird mit `isEvalSupported: false` aufgerufen; das schließt die bekannte Lücke beim Öffnen manipulierter PDF (GHSA-wgrm-67xf-hhpq).
 - SheetJS 0.18.5 ist die letzte Version auf npm und hat bekannte Schwachstellen beim Einlesen manipulierter Excel-Dateien (CVE-2023-30533, CVE-2024-22363). Excel-LVs nur aus vertrauenswürdiger Quelle einlesen; Umstieg auf SheetJS 0.20.x steht aus.
 
@@ -77,6 +79,7 @@ npm run build && node e2e/smoke.mjs dist/index.html
 
 Erledigt in 1.1.0: Feiertage je Bundesland, Herkunftskennzeichnung im Prüfvermerk, Programmversion, Schemaversion, Konfliktkopie beim Abgleich, Datenschutz-Hinweis vor der KI-Erkennung, Offline-Fähigkeit.
 
-1. SheetJS auf 0.20.x und pdf.js auf eine aktuelle Hauptversion umstellen.
-2. Oberfläche schrittweise nach TypeScript überführen und Teil-Rendering für große LVs.
-3. Regional begrenzte Feiertage (Gemeindeebene) optional erfassen.
+1. Auswertung erkannter Scans ohne KI (regelbasiert für Rechnungen, LV und Aufmaß), damit die Desktop-Version Scans selbst einlesen kann.
+2. SheetJS auf 0.20.x und pdf.js auf eine aktuelle Hauptversion umstellen.
+3. Oberfläche schrittweise nach TypeScript überführen und Teil-Rendering für große LVs.
+4. Regional begrenzte Feiertage (Gemeindeebene) optional erfassen.
